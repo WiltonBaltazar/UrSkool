@@ -459,6 +459,13 @@ export async function fetchStudentCourse(courseId: string): Promise<Course> {
   return payload.data;
 }
 
+export async function fetchStudentCourses(): Promise<Course[]> {
+  const response = await fetchWithCsrfRetry("/api/student/courses");
+
+  const payload = await parseResponse<ApiResponse<Course[]>>(response);
+  return payload.data;
+}
+
 export async function saveLessonProgress(
   courseId: string,
   lessonId: string,
@@ -504,6 +511,13 @@ export async function fetchAuthUser(): Promise<AuthUser | null> {
   return payload.data;
 }
 
+export async function fetchSignupAvailability(): Promise<{ allowSelfSignup: boolean }> {
+  const response = await fetchWithCsrfRetry("/api/auth/signup-availability");
+
+  const payload = await parseResponse<ApiResponse<{ allowSelfSignup: boolean }>>(response);
+  return payload.data;
+}
+
 export async function login(payload: {
   email: string;
   password: string;
@@ -511,6 +525,27 @@ export async function login(payload: {
   const response = await fetchWithCsrfRetry("/api/auth/login", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+
+  const parsed = await parseResponse<ApiResponse<AuthUser> & { session?: unknown }>(response);
+  applySessionMetadata(parsed.session);
+  return parsed.data;
+}
+
+export async function register(payload: {
+  name: string;
+  email: string;
+  password: string;
+  passwordConfirmation: string;
+}): Promise<AuthUser> {
+  const response = await fetchWithCsrfRetry("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      name: payload.name,
+      email: payload.email,
+      password: payload.password,
+      password_confirmation: payload.passwordConfirmation,
+    }),
   });
 
   const parsed = await parseResponse<ApiResponse<AuthUser> & { session?: unknown }>(response);

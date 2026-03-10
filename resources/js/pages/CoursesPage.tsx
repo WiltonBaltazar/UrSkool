@@ -1,10 +1,12 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Search } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import CourseCard from "@/components/CourseCard";
 import Navbar from "@/components/Navbar";
-import { fetchCategories, fetchCourses } from "@/lib/api";
+import { fetchAuthUser, fetchCategories, fetchCourses } from "@/lib/api";
 
 const CoursesPage = () => {
   const [activeCategory, setActiveCategory] = useState("Todas");
@@ -13,6 +15,11 @@ const CoursesPage = () => {
   const { data: categories = ["Todas"] } = useQuery({
     queryKey: ["categories"],
     queryFn: fetchCategories,
+  });
+
+  const { data: user } = useQuery({
+    queryKey: ["auth-user"],
+    queryFn: fetchAuthUser,
   });
 
   const { data: courses = [], isLoading, isError } = useQuery({
@@ -41,6 +48,13 @@ const CoursesPage = () => {
               className="pl-9 rounded-full h-10 bg-surface-sunken font-body"
             />
           </div>
+          {user?.isAdmin && (
+            <Link to="/courses/new">
+              <Button className="bg-accent hover:bg-accent-hover text-accent-foreground font-body">
+                Criar novo curso
+              </Button>
+            </Link>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-2 mb-8">
@@ -68,7 +82,14 @@ const CoursesPage = () => {
         {!isLoading && !isError && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {courses.map((course) => (
-              <CourseCard key={course.id} course={course} />
+              <div key={course.id} className="space-y-2">
+                <CourseCard course={course} />
+                {user?.isAdmin && (
+                  <Link to={`/courses/${course.id}/edit`}>
+                    <Button variant="outline" className="w-full">Editar curso</Button>
+                  </Link>
+                )}
+              </div>
             ))}
           </div>
         )}

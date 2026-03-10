@@ -23,8 +23,8 @@ class RegisterRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'first_name' => ['required', 'string', 'max:255'],
-            'last_name' => ['required', 'string', 'max:255'],
+            'first_name' => ['required', 'string', 'max:255', 'regex:/^[\p{L}\s\-\.\']+$/u'],
+            'last_name' => ['required', 'string', 'max:255', 'regex:/^[\p{L}\s\-\.\']+$/u'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users'],
             'password' => ['required', 'confirmed', Password::min(6)],
             // 'phone_number' => ['required', 'string', 'min:9', 'regex:/^[0-9+\s()-]+$/'],
@@ -33,7 +33,7 @@ class RegisterRequest extends FormRequest
             'mpesa_contact' => [
                 'required',
                 'string',
-                'regex:/^(82|83|84|85|86|87)[0-9]{7}$/'
+                'regex:/^(82|83|84|85|86|87)[0-9]{7}$/',
             ],
             'terms_accepted' => ['required', 'accepted'],
         ];
@@ -43,7 +43,9 @@ class RegisterRequest extends FormRequest
     {
         return [
             'first_name.required' => 'First Name is required.',
+            'first_name.regex' => 'First Name cannot contain emojis.',
             'last_name.required' => 'Last Name is required.',
+            'last_name.regex' => 'Last Name cannot contain emojis.',
             'email.required' => 'Email is required.',
             'email.email' => 'Please provide a valid email address.',
             'email.unique' => 'This email is already registered.',

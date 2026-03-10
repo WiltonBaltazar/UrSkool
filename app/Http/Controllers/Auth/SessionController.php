@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\AppSetting;
 use App\Models\User;
 use App\Services\WebSessionService;
 use Illuminate\Http\JsonResponse;
@@ -16,8 +17,7 @@ class SessionController extends Controller
 {
     public function __construct(
         private readonly WebSessionService $webSessionService
-    ) {
-    }
+    ) {}
 
     public function user(Request $request): JsonResponse
     {
@@ -26,6 +26,59 @@ class SessionController extends Controller
         return response()->json([
             'data' => $user ? $this->transformUser($user) : null,
         ])->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    }
+
+    public function signupAvailability(): JsonResponse
+    {
+        return response()->json([
+            'data' => [
+                'allowSelfSignup' => $this->allowsSelfSignup(),
+            ],
+        ]);
+    }
+
+    /**
+     * @throws ValidationException
+     */
+    public function register(Request $request): JsonResponse
+    {
+        if (! $this->allowsSelfSignup()) {
+            throw ValidationException::withMessages([
+                'signup' => 'O registo de novas contas está desativado no momento.',
+            ]);
+        }
+
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255', 'regex:/^[\p{L}\s\-\.\']+$/u'],
+            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ], [
+            'name.regex' => 'O nome não pode conter emojis.',
+        ]);
+
+        $user = User::query()->create([
+            'name' => $validated['name'],
+            'email' => strtolower((string) $validated['email']),
+            'password' => Hash::make((string) $validated['password']),
+            'is_admin' => false,
+        ]);
+
+        Auth::login($user, true);
+        if ($request->hasSession()) {
+            $request->session()->regenerate();
+        }
+
+        $this->webSessionService->revokeAccessTokenFromRequest($request);
+        $this->webSessionService->revokeRefreshTokenFromRequest($request);
+        $session = $this->webSessionService->issueSession($user, $request);
+
+        return response()->json([
+            'message' => 'Conta criada com sucesso.',
+            'data' => $this->transformUser($user),
+            'session' => $session['session'],
+        ], 201)
+            ->cookie($session['access_cookie'])
+            ->cookie($session['refresh_cookie']);
     }
 
     /**
@@ -64,7 +117,7 @@ class SessionController extends Controller
         }
 
         $user = Auth::user();
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             throw ValidationException::withMessages([
                 'email' => 'Não foi possível iniciar sessão.',
             ]);
@@ -87,7 +140,7 @@ class SessionController extends Controller
     {
         $refreshToken = $this->webSessionService->resolveRefreshTokenFromRequest($request);
 
-        if (!$refreshToken || !($refreshToken->tokenable instanceof User)) {
+        if (! $refreshToken || ! ($refreshToken->tokenable instanceof User)) {
             return response()->json([
                 'message' => 'Sessão expirada. Inicia sessão novamente.',
             ], 401)
@@ -148,5 +201,14 @@ class SessionController extends Controller
             'email' => $user->email,
             'isAdmin' => (bool) $user->is_admin,
         ];
+    }
+
+    private function allowsSelfSignup(): bool
+    {
+        $allowSelfSignup = AppSetting::query()
+            ->where('key', 'allow_self_signup')
+            ->value('value');
+
+        return $allowSelfSignup !== 'false';
     }
 }

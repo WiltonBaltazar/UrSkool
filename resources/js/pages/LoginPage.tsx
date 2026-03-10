@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Lock } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { login } from "@/lib/api";
+import { fetchSignupAvailability, login } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
 const LoginPage = () => {
@@ -19,6 +19,11 @@ const LoginPage = () => {
 
   const [email, setEmail] = useState(locationState?.email || "");
   const [password, setPassword] = useState("");
+  const { data: signupAvailability } = useQuery({
+    queryKey: ["signup-availability"],
+    queryFn: fetchSignupAvailability,
+  });
+  const allowSelfSignup = signupAvailability?.allowSelfSignup ?? true;
 
   const loginMutation = useMutation({
     mutationFn: login,
@@ -88,6 +93,15 @@ const LoginPage = () => {
               >
                 {loginMutation.isPending ? "A iniciar sessão..." : "Entrar"}
               </Button>
+
+              {allowSelfSignup && (
+                <p className="text-sm text-muted-foreground font-body text-center">
+                  Ainda nao tens conta?{" "}
+                  <Link to="/signup" className="text-foreground hover:underline">
+                    Criar conta
+                  </Link>
+                </p>
+              )}
             </CardContent>
           </Card>
         </div>

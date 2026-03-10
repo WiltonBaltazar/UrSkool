@@ -95,6 +95,12 @@ docker-init: env-docker docker-up
 docker-fresh:
 	docker compose exec app php artisan migrate:fresh --seed --force
 
+docker-migrate:
+	docker compose exec app php artisan migrate:fresh --force
+
+docker-seed:
+	docker compose exec app php artisan db:seed --force
+
 docker-test:
 	docker compose exec app php artisan test
 

@@ -38,7 +38,7 @@ class CourseController extends Controller
         $validated = $this->validatePayload($request);
 
         $course = DB::transaction(function () use ($validated): Course {
-            return $this->persistCourse(new Course(), $validated);
+            return $this->persistCourse(new Course, $validated);
         });
 
         $course->load('sections.lessons');
@@ -121,6 +121,12 @@ class CourseController extends Controller
             'sections.*.lessons.*.htmlCode' => ['nullable', 'string'],
             'sections.*.lessons.*.cssCode' => ['nullable', 'string'],
             'sections.*.lessons.*.jsCode' => ['nullable', 'string'],
+            'sections.*.lessons.*.workspaceFiles' => ['nullable', 'array'],
+            'sections.*.lessons.*.workspaceFiles.*.id' => ['required_with:sections.*.lessons.*.workspaceFiles', 'string', 'max:120'],
+            'sections.*.lessons.*.workspaceFiles.*.name' => ['required_with:sections.*.lessons.*.workspaceFiles', 'string', 'max:255'],
+            'sections.*.lessons.*.workspaceFiles.*.language' => ['required_with:sections.*.lessons.*.workspaceFiles', 'in:html,css,js'],
+            'sections.*.lessons.*.workspaceFiles.*.content' => ['nullable', 'string'],
+            'sections.*.lessons.*.entryHtmlFileId' => ['nullable', 'string', 'max:120'],
             'sections.*.lessons.*.isFree' => ['nullable', 'boolean'],
             'sections.*.lessons.*.type' => ['nullable', 'in:video,text,code,quiz,project'],
             'sections.*.lessons.*.quizQuestions' => ['nullable', 'array'],
@@ -191,6 +197,8 @@ class CourseController extends Controller
                     'html_code' => $lessonPayload['htmlCode'] ?? null,
                     'css_code' => $lessonPayload['cssCode'] ?? null,
                     'js_code' => $lessonPayload['jsCode'] ?? null,
+                    'workspace_files' => $this->normalizeWorkspaceFiles($lessonPayload),
+                    'entry_html_file_id' => $this->normalizeEntryHtmlFileId($lessonPayload),
                     'quiz_questions' => $isQuizLesson
                         ? $this->normalizeQuizQuestions($lessonPayload['quizQuestions'] ?? [])
                         : null,
@@ -243,6 +251,8 @@ class CourseController extends Controller
                     'htmlCode' => $lesson->html_code,
                     'cssCode' => $lesson->css_code,
                     'jsCode' => $lesson->js_code,
+                    'workspaceFiles' => $lesson->workspace_files,
+                    'entryHtmlFileId' => $lesson->entry_html_file_id,
                     'quizQuestions' => $lesson->quiz_questions,
                     'quizPassPercentage' => $lesson->quiz_pass_percentage,
                     'quizRandomizeQuestions' => $lesson->quiz_randomize_questions,
@@ -270,6 +280,7 @@ class CourseController extends Controller
 
                 if (! is_array($questions) || count($questions) < 1) {
                     $errors[$base.'.quizQuestions'] = 'Lições do tipo questionário precisam de pelo menos 1 pergunta.';
+
                     continue;
                 }
 
@@ -289,6 +300,7 @@ class CourseController extends Controller
 
                     if (! is_array($options) || count($options) < 2) {
                         $errors[$questionBase.'.options'] = 'Cada pergunta do questionário precisa de pelo menos 2 opções.';
+
                         continue;
                     }
 
@@ -337,6 +349,55 @@ class CourseController extends Controller
                 'correctOptionIndex' => max(0, min($correctOptionIndex, $maxCorrectIndex)),
             ];
         }, $questions, array_keys($questions)));
+    }
+
+    private function normalizeWorkspaceFiles(array $lessonPayload): ?array
+    {
+        $workspaceFiles = $lessonPayload['workspaceFiles'] ?? null;
+        if (! is_array($workspaceFiles)) {
+            return null;
+        }
+
+        $normalized = [];
+        foreach ($workspaceFiles as $file) {
+            if (! is_array($file)) {
+                continue;
+            }
+
+            $id = trim((string) ($file['id'] ?? ''));
+            $name = trim((string) ($file['name'] ?? ''));
+            $language = trim((string) ($file['language'] ?? ''));
+
+            if ($id === '' || $name === '' || ! in_array($language, ['html', 'css', 'js'], true)) {
+                continue;
+            }
+
+            $normalized[] = [
+                'id' => $id,
+                'name' => $name,
+                'language' => $language,
+                'content' => (string) ($file['content'] ?? ''),
+            ];
+        }
+
+        return $normalized === [] ? null : $normalized;
+    }
+
+    private function normalizeEntryHtmlFileId(array $lessonPayload): ?string
+    {
+        $entryId = trim((string) ($lessonPayload['entryHtmlFileId'] ?? ''));
+        if ($entryId === '') {
+            return null;
+        }
+
+        $workspaceFiles = $this->normalizeWorkspaceFiles($lessonPayload) ?? [];
+        foreach ($workspaceFiles as $file) {
+            if (($file['id'] ?? '') === $entryId && ($file['language'] ?? '') === 'html') {
+                return $entryId;
+            }
+        }
+
+        return null;
     }
 
     private function normalizeCategory(string $value): string

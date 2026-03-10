@@ -17,12 +17,12 @@ use Illuminate\Validation\ValidationException;
 class EnrollmentController extends Controller
 {
     private const QUERY_PERMISSION_FALLBACK_MINUTES = 90;
+
     private const ACTIVE_PENDING_LOCK_MINUTES = 5;
 
     public function __construct(
         private readonly MpesaService $mpesaService
-    ) {
-    }
+    ) {}
 
     /**
      * @throws ValidationException
@@ -39,11 +39,11 @@ class EnrollmentController extends Controller
 
         $course = Course::query()->findOrFail($validated['courseId']);
         $checkoutIdentity = $this->resolveCheckoutIdentity($request, $validated);
-        $checkoutEmail = (string) $checkoutIdentity['email'];
+        [$checkoutUser, $accountPrepared] = $this->ensureCheckoutUserRecord($checkoutIdentity);
 
         $otherPendingEnrollment = Enrollment::query()
             ->with('course:id,title')
-            ->where('email', $checkoutEmail)
+            ->where('user_id', $checkoutUser->id)
             ->where('status', 'pending')
             ->where('course_id', '!=', $course->id)
             ->latest('updated_at')
@@ -70,13 +70,14 @@ class EnrollmentController extends Controller
 
         $completedEnrollment = Enrollment::query()
             ->where('course_id', $course->id)
-            ->where('email', $checkoutEmail)
+            ->where('user_id', $checkoutUser->id)
             ->where('status', 'completed')
             ->latest('updated_at')
             ->first();
 
         if ($completedEnrollment) {
-            [, $accountCreated] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+            [, $accountCreatedFromLogin] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+            $accountCreated = $accountPrepared || $accountCreatedFromLogin;
 
             return response()->json([
                 'message' => 'Este curso já foi adquirido nesta conta.',
@@ -93,12 +94,13 @@ class EnrollmentController extends Controller
         if ((float) $course->price <= 0) {
             $enrollment = $this->upsertEnrollment(
                 course: $course,
-                email: $checkoutEmail,
+                user: $checkoutUser,
                 fullName: $validated['fullName'],
                 status: 'completed',
                 paymentReference: 'FREE-'.Str::upper(Str::random(8)),
             );
-            [, $accountCreated] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+            [, $accountCreatedFromLogin] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+            $accountCreated = $accountPrepared || $accountCreatedFromLogin;
 
             return response()->json([
                 'message' => 'Inscrição concluída com sucesso.',
@@ -114,7 +116,7 @@ class EnrollmentController extends Controller
 
         $pendingEnrollment = Enrollment::query()
             ->where('course_id', $course->id)
-            ->where('email', $checkoutEmail)
+            ->where('user_id', $checkoutUser->id)
             ->where('status', 'pending')
             ->whereNotNull('payment_reference')
             ->latest('updated_at')
@@ -128,7 +130,8 @@ class EnrollmentController extends Controller
                 $isMockMode
             );
             if ($pendingResolution instanceof Enrollment) {
-                [, $accountCreated] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+                [, $accountCreatedFromLogin] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+                $accountCreated = $accountPrepared || $accountCreatedFromLogin;
 
                 return response()->json([
                     'message' => 'Inscrição concluída com sucesso.',
@@ -148,26 +151,26 @@ class EnrollmentController extends Controller
                         'status' => 'failed',
                     ])->save();
                 } else {
-                return response()->json([
-                    'message' => 'Pedido de pagamento já enviado. Confirma o PIN no teu telemóvel.',
-                    'data' => [
-                        'courseId' => (string) $course->id,
-                        'status' => 'pending',
-                        'paymentReference' => $pendingEnrollment->payment_reference,
-                        'accountCreated' => false,
-                    ],
-                ], 202);
+                    return response()->json([
+                        'message' => 'Pedido de pagamento já enviado. Confirma o PIN no teu telemóvel.',
+                        'data' => [
+                            'courseId' => (string) $course->id,
+                            'status' => 'pending',
+                            'paymentReference' => $pendingEnrollment->payment_reference,
+                            'accountCreated' => false,
+                        ],
+                    ], 202);
                 }
             }
         }
 
-        if (!isset($validated['mpesaContact']) || trim((string) $validated['mpesaContact']) === '') {
+        if (! isset($validated['mpesaContact']) || trim((string) $validated['mpesaContact']) === '') {
             throw ValidationException::withMessages([
                 'mpesaContact' => 'Informa o número M-Pesa para concluir a compra.',
             ]);
         }
 
-        if (!$isMockMode && !$this->mpesaService->hasLiveConfiguration()) {
+        if (! $isMockMode && ! $this->mpesaService->hasLiveConfiguration()) {
             throw ValidationException::withMessages([
                 'mpesa' => 'Configuração M-Pesa incompleta. Define API key, public key e service provider code.',
             ]);
@@ -189,11 +192,11 @@ class EnrollmentController extends Controller
             );
         $thirdPartyReference = (string) ($paymentResult['third_party_reference'] ?? $reference);
 
-        if (!($paymentResult['success'] ?? false)) {
+        if (! ($paymentResult['success'] ?? false)) {
             if ($this->isAmbiguousPaymentFailure($paymentResult)) {
                 $enrollment = $this->upsertEnrollment(
                     course: $course,
-                    email: $checkoutEmail,
+                    user: $checkoutUser,
                     fullName: $validated['fullName'],
                     status: 'pending',
                     paymentReference: $thirdPartyReference,
@@ -213,7 +216,7 @@ class EnrollmentController extends Controller
 
             $this->upsertEnrollment(
                 course: $course,
-                email: $checkoutEmail,
+                user: $checkoutUser,
                 fullName: $validated['fullName'],
                 status: 'failed',
                 paymentReference: $thirdPartyReference,
@@ -238,12 +241,13 @@ class EnrollmentController extends Controller
         if (($queryResult['success'] ?? false) && $this->mpesaService->isSuccessfulTransactionStatus($queryResult['status'] ?? null)) {
             $enrollment = $this->upsertEnrollment(
                 course: $course,
-                email: $checkoutEmail,
+                user: $checkoutUser,
                 fullName: $validated['fullName'],
                 status: 'completed',
                 paymentReference: $thirdPartyReference,
             );
-            [, $accountCreated] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+            [, $accountCreatedFromLogin] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+            $accountCreated = $accountPrepared || $accountCreatedFromLogin;
 
             return response()->json([
                 'message' => 'Inscrição concluída com sucesso.',
@@ -260,7 +264,7 @@ class EnrollmentController extends Controller
         if (($queryResult['success'] ?? false) && $this->mpesaService->isFailedTransactionStatus($queryResult['status'] ?? null)) {
             $this->upsertEnrollment(
                 course: $course,
-                email: $checkoutEmail,
+                user: $checkoutUser,
                 fullName: $validated['fullName'],
                 status: 'failed',
                 paymentReference: $thirdPartyReference,
@@ -280,12 +284,13 @@ class EnrollmentController extends Controller
         if ($this->shouldAssumeCompletedFromInitiation($paymentResult, $queryResult)) {
             $enrollment = $this->upsertEnrollment(
                 course: $course,
-                email: $checkoutEmail,
+                user: $checkoutUser,
                 fullName: $validated['fullName'],
                 status: 'completed',
                 paymentReference: $thirdPartyReference,
             );
-            [, $accountCreated] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+            [, $accountCreatedFromLogin] = $this->ensureCheckoutUserAndLogin($request, $checkoutIdentity);
+            $accountCreated = $accountPrepared || $accountCreatedFromLogin;
 
             return response()->json([
                 'message' => 'Pagamento confirmado e inscrição concluída com sucesso.',
@@ -301,7 +306,7 @@ class EnrollmentController extends Controller
 
         $enrollment = $this->upsertEnrollment(
             course: $course,
-            email: $checkoutEmail,
+            user: $checkoutUser,
             fullName: $validated['fullName'],
             status: 'pending',
             paymentReference: $thirdPartyReference,
@@ -350,7 +355,7 @@ class EnrollmentController extends Controller
         }
 
         $existingUser = User::query()
-            ->where('email', $email)
+            ->whereRaw('LOWER(email) = ?', [$email])
             ->first();
 
         if ($existingUser) {
@@ -361,7 +366,7 @@ class EnrollmentController extends Controller
                 || hash_equals($storedPassword, $providedPassword)
             );
 
-            if (!$matches) {
+            if (! $matches) {
                 throw ValidationException::withMessages([
                     'password' => 'Conta existente. Informa a palavra-passe correta para continuar.',
                 ]);
@@ -382,7 +387,7 @@ class EnrollmentController extends Controller
             ];
         }
 
-        if (!isset($validated['password']) || trim((string) $validated['password']) === '') {
+        if (! isset($validated['password']) || trim((string) $validated['password']) === '') {
             throw ValidationException::withMessages([
                 'password' => 'Define uma palavra-passe para criar a conta automaticamente.',
             ]);
@@ -398,24 +403,34 @@ class EnrollmentController extends Controller
 
     private function ensureCheckoutUserAndLogin(Request $request, array $checkoutIdentity): array
     {
+        [$user, $accountCreated] = $this->ensureCheckoutUserRecord($checkoutIdentity);
         $fullName = (string) $checkoutIdentity['fullName'];
-        $email = (string) $checkoutIdentity['email'];
         $existingSessionUser = $request->user();
 
-        if ($existingSessionUser) {
+        if ($existingSessionUser && (int) $existingSessionUser->id === (int) $user->id) {
             if ($fullName !== $existingSessionUser->name) {
                 $existingSessionUser->forceFill([
                     'name' => $fullName,
                 ])->save();
             }
 
-            return [$existingSessionUser->fresh(), false];
+            return [$existingSessionUser->fresh(), $accountCreated];
         }
 
+        Auth::login($user, true);
+        $request->session()->regenerate();
+
+        return [$user->fresh(), $accountCreated];
+    }
+
+    private function ensureCheckoutUserRecord(array $checkoutIdentity): array
+    {
+        $fullName = (string) $checkoutIdentity['fullName'];
+        $email = (string) $checkoutIdentity['email'];
         $user = $checkoutIdentity['user'] ?? null;
         $accountCreated = false;
 
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             $user = User::query()->firstOrCreate(
                 ['email' => $email],
                 [
@@ -434,27 +449,26 @@ class EnrollmentController extends Controller
             ])->save();
         }
 
-        Auth::login($user, true);
-        $request->session()->regenerate();
-
         return [$user->fresh(), $accountCreated];
     }
 
     private function upsertEnrollment(
         Course $course,
-        string $email,
+        User $user,
         string $fullName,
         string $status,
         string $paymentReference
     ): Enrollment {
         $enrollment = Enrollment::query()->firstOrNew([
             'course_id' => $course->id,
-            'email' => $email,
+            'user_id' => $user->id,
         ]);
 
         $previousStatus = $enrollment->exists ? (string) $enrollment->status : null;
 
         $enrollment->fill([
+            'user_id' => $user->id,
+            'email' => $user->email,
             'full_name' => $fullName,
             'amount' => (float) $course->price,
             'status' => $status,
@@ -492,8 +506,7 @@ class EnrollmentController extends Controller
         Course $course,
         string $fullName,
         bool $isMockMode
-    ): Enrollment|string|null
-    {
+    ): Enrollment|string|null {
         if ($isMockMode) {
             return $this->markEnrollmentCompleted($enrollment, $course, $fullName);
         }
@@ -509,6 +522,7 @@ class EnrollmentController extends Controller
             $enrollment->forceFill([
                 'status' => 'failed',
             ])->save();
+
             return null;
         }
 
@@ -526,11 +540,11 @@ class EnrollmentController extends Controller
 
     private function shouldAssumeCompletedFromInitiation(array $paymentResult, array $queryResult): bool
     {
-        if (!($paymentResult['success'] ?? false)) {
+        if (! ($paymentResult['success'] ?? false)) {
             return false;
         }
 
-        if (!$this->mpesaService->isSuccessfulResponseCode((string) ($paymentResult['response_code'] ?? null))) {
+        if (! $this->mpesaService->isSuccessfulResponseCode((string) ($paymentResult['response_code'] ?? null))) {
             return false;
         }
 
@@ -591,7 +605,7 @@ class EnrollmentController extends Controller
                 ->where('payment_reference', $reference)
                 ->exists();
 
-            if (!$exists) {
+            if (! $exists) {
                 return $reference;
             }
         }

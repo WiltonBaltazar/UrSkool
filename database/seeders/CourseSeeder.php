@@ -887,6 +887,7 @@ class CourseSeeder extends Seeder
                 foreach ($lessons as $lessonIndex => $lessonData) {
                     $lessonType = (string) ($lessonData['type'] ?? 'code');
                     $content = $this->formatLessonContent($lessonData, $lessonType);
+                    $isCodeLesson = $lessonType === 'code';
 
                     $section->lessons()->create([
                         'title' => $lessonData['title'],
@@ -896,10 +897,10 @@ class CourseSeeder extends Seeder
                         'type' => $lessonType,
                         'language' => $lessonData['language'] ?? null,
                         'content' => $content,
-                        'starter_code' => $lessonData['starter_code'] ?? null,
-                        'html_code' => $lessonData['html_code'] ?? null,
-                        'css_code' => $lessonData['css_code'] ?? null,
-                        'js_code' => $lessonData['js_code'] ?? null,
+                        'starter_code' => $isCodeLesson ? ($lessonData['starter_code'] ?? null) : null,
+                        'html_code' => $isCodeLesson ? ($lessonData['html_code'] ?? null) : null,
+                        'css_code' => $isCodeLesson ? ($lessonData['css_code'] ?? null) : null,
+                        'js_code' => $isCodeLesson ? ($lessonData['js_code'] ?? null) : null,
                         'quiz_questions' => $lessonData['quiz_questions'] ?? null,
                         'quiz_pass_percentage' => $lessonData['quiz_pass_percentage'] ?? null,
                         'quiz_randomize_questions' => $lessonData['quiz_randomize_questions'] ?? null,
@@ -921,7 +922,7 @@ class CourseSeeder extends Seeder
                         'duration' => '09:40',
                         'is_free' => true,
                         'type' => 'text',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Teoria
 HTML organiza o conteudo da pagina. CSS define aparencia, espacos e hierarquia visual.
 Quando o browser abre um ficheiro HTML, ele cria uma arvore de elementos e aplica as regras CSS em cascata.
@@ -945,7 +946,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'html',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Uma pagina precisa de uma estrutura base para ser valida e previsivel em qualquer browser.
 Requisitos:
 1. Adiciona doctype, html, head e body.
@@ -1016,7 +1017,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'html',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Marcar texto corretamente melhora acessibilidade e SEO.
 Requisitos:
 1. Cria um h1, um h2 e tres paragrafos.
@@ -1032,7 +1033,7 @@ TEXT,
                         ],
                         'hint' => 'Usa h1 apenas uma vez por pagina e desce para h2/h3 conforme a hierarquia.',
                         'html_code' => "<article>\n  <h1></h1>\n  <h2></h2>\n  <p></p>\n</article>",
-                        'css_code' => "body { font-family: Arial, sans-serif; margin: 20px; }",
+                        'css_code' => 'body { font-family: Arial, sans-serif; margin: 20px; }',
                         'js_code' => '',
                     ],
                     [
@@ -1041,7 +1042,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'html',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Listas e links sao a base de menus e documentos navegaveis.
 Requisitos:
 1. Cria uma lista ordenada com 4 passos.
@@ -1112,7 +1113,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'html',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Conteudo visual deve manter contexto mesmo sem imagem carregada.
 Requisitos:
 1. Insere uma imagem com src valido e alt descritivo.
@@ -1137,7 +1138,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'html',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Tabelas devem separar cabecalho e corpo para leitura e manutencao.
 Requisitos:
 1. Cria table com thead e tbody.
@@ -1207,7 +1208,7 @@ TEXT,
                         'duration' => '10:20',
                         'is_free' => false,
                         'type' => 'text',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Teoria
 Seletores definem onde a regra sera aplicada. A cascata decide qual regra vence.
 A ordem importa: regras mais especificas ou mais recentes podem sobrescrever regras anteriores.
@@ -1227,7 +1228,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'css',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Uma interface clara comeca com escala tipografica e espacamentos previsiveis.
 Requisitos:
 1. Define font-family, font-size base e line-height no body.
@@ -1252,7 +1253,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'css',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Box model controla como cada bloco ocupa espaco.
 Requisitos:
 1. Em .card define border, border-radius e padding.
@@ -1323,7 +1324,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'css',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Flexbox facilita distribuicao de espaco entre blocos.
 Requisitos:
 1. Define .layout com display flex e gap entre colunas.
@@ -1348,7 +1349,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'css',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Grid e ideal para estruturas de cards e galerias.
 Requisitos:
 1. Define .cards com display grid.
@@ -1364,7 +1365,7 @@ TEXT,
                         ],
                         'hint' => 'auto-fit + minmax reduz media queries para cenarios comuns de grid.',
                         'html_code' => "<section class=\"cards\">\n  <article class=\"card\">Card 1</article>\n  <article class=\"card\">Card 2</article>\n  <article class=\"card\">Card 3</article>\n</section>",
-                        'css_code' => ".card { border: 1px solid #d1d5db; border-radius: 10px; min-height: 110px; padding: 12px; }",
+                        'css_code' => '.card { border: 1px solid #d1d5db; border-radius: 10px; min-height: 110px; padding: 12px; }',
                         'js_code' => '',
                     ],
                     [
@@ -1419,7 +1420,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'html',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Formularios bons sao claros, acessiveis e validos desde o HTML.
 Requisitos:
 1. Cria formulario com nome, email, contacto e password.
@@ -1435,7 +1436,7 @@ TEXT,
                         ],
                         'hint' => 'Inputs sem label tornam navegacao por leitor de ecra muito mais dificil.',
                         'html_code' => "<form class=\"register-form\">\n</form>",
-                        'css_code' => ".register-form { max-width: 460px; display: grid; gap: 10px; }",
+                        'css_code' => '.register-form { max-width: 460px; display: grid; gap: 10px; }',
                         'js_code' => '',
                     ],
                     [
@@ -1444,7 +1445,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'css',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Feedback visual ajuda o utilizador a corrigir rapido.
 Requisitos:
 1. Cria classes .field-error e .field-success para bordas.
@@ -1515,7 +1516,7 @@ TEXT,
                         'is_free' => false,
                         'type' => 'code',
                         'language' => 'html',
-                        'content' => <<<TEXT
+                        'content' => <<<'TEXT'
 Integra tudo que aprendeste: estrutura, tipografia, layout, midia e formulario.
 Requisitos:
 1. Monta cabecalho com navegacao e chamada principal.
@@ -1634,7 +1635,7 @@ HTML;
 
     private function normalizeCodeExamples(mixed $rawExamples): array
     {
-        if (!is_array($rawExamples)) {
+        if (! is_array($rawExamples)) {
             return [];
         }
 
@@ -1655,7 +1656,7 @@ HTML;
                 continue;
             }
 
-            if (!is_array($example)) {
+            if (! is_array($example)) {
                 continue;
             }
 
@@ -1691,6 +1692,7 @@ HTML;
 
             if (preg_match('/^\d+[\.\)]\s*(.+)$/', $clean, $matches) === 1) {
                 $steps[] = trim($matches[1]);
+
                 continue;
             }
 

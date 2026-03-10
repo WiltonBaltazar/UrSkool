@@ -4,7 +4,7 @@ import { Search, ShoppingCart, User, BookOpen, LayoutDashboard } from "lucide-re
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { fetchAuthUser, logout } from "@/lib/api";
+import { fetchAuthUser, fetchSignupAvailability, logout } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { clearCart, getCartItems, subscribeToCart } from "@/lib/cart";
 
@@ -28,6 +28,11 @@ const Navbar = () => {
     queryKey: ["auth-user"],
     queryFn: fetchAuthUser,
   });
+  const { data: signupAvailability } = useQuery({
+    queryKey: ["signup-availability"],
+    queryFn: fetchSignupAvailability,
+  });
+  const allowSelfSignup = signupAvailability?.allowSelfSignup ?? true;
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess: async () => {
@@ -88,11 +93,20 @@ const Navbar = () => {
             </Button>
           </Link>
           {!user && (
-            <Link to="/login">
-              <Button variant="ghost" size="sm" className="font-body text-sm">
-                Entrar
-              </Button>
-            </Link>
+            <>
+              {allowSelfSignup && (
+                <Link to="/signup">
+                  <Button variant="ghost" size="sm" className="font-body text-sm">
+                    Criar conta
+                  </Button>
+                </Link>
+              )}
+              <Link to="/login">
+                <Button variant="ghost" size="sm" className="font-body text-sm">
+                  Entrar
+                </Button>
+              </Link>
+            </>
           )}
           {user && (
             <Button
@@ -110,7 +124,7 @@ const Navbar = () => {
               Limpar carrinho
             </Button>
           )}
-          <Link to="/courses">
+          <Link to={user ? "/my-learning" : "/login"}>
             <Button variant="ghost" size="sm" className="font-body text-sm">
               <User className="h-4 w-4 mr-1" />
               Minha Aprendizagem

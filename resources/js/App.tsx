@@ -7,12 +7,15 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from "react
 import { fetchAuthUser, initializeSessionRenewal } from "@/lib/api";
 import Index from "./pages/Index";
 import CoursesPage from "./pages/CoursesPage";
+import CourseBuilderPage from "./pages/CourseBuilderPage";
 import CoursePage from "./pages/CoursePage";
 import CheckoutPage from "./pages/CheckoutPage";
 import CartPage from "./pages/CartPage";
 import AdminPage from "./pages/AdminPage";
 import StudentPlayerPage from "./pages/StudentPlayerPage";
 import LoginPage from "./pages/LoginPage";
+import SignupPage from "./pages/SignupPage";
+import MyLearningPage from "./pages/MyLearningPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -121,7 +124,7 @@ const GuestOnly = ({ children }: { children: JSX.Element }) => {
   }
 
   if (user) {
-    return <Navigate to={user.isAdmin ? "/admin" : "/courses"} replace />;
+    return <Navigate to={user.isAdmin ? "/admin" : "/my-learning"} replace />;
   }
 
   return children;
@@ -137,6 +140,22 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/courses" element={<CoursesPage />} />
+          <Route
+            path="/courses/new"
+            element={
+              <RequireAdmin>
+                <CourseBuilderPage />
+              </RequireAdmin>
+            }
+          />
+          <Route
+            path="/courses/:courseId/edit"
+            element={
+              <RequireAdmin>
+                <CourseBuilderPage />
+              </RequireAdmin>
+            }
+          />
           <Route path="/course/:id" element={<CoursePage />} />
           <Route path="/cart" element={<CartPage />} />
           <Route path="/checkout/:id" element={<CheckoutPage />} />
@@ -154,6 +173,22 @@ const App = () => (
               <GuestOnly>
                 <LoginPage />
               </GuestOnly>
+            }
+          />
+          <Route
+            path="/signup"
+            element={
+              <GuestOnly>
+                <SignupPage />
+              </GuestOnly>
+            }
+          />
+          <Route
+            path="/my-learning"
+            element={
+              <RequireUser>
+                <MyLearningPage />
+              </RequireUser>
             }
           />
           <Route

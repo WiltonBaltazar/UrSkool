@@ -4,9 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Course;
+use App\Models\LessonProgress;
 use App\Support\CourseProgressPresenter;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class CourseController extends Controller
@@ -86,6 +87,70 @@ class CourseController extends Controller
         ]);
     }
 
+    public function studentIndex(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user) {
+            abort(401, 'Sessão inválida. Inicia sessão novamente.');
+        }
+
+        $enrollments = $user->enrollments()
+            ->with('course.sections.lessons')
+            ->where('status', 'completed')
+            ->orderByDesc('updated_at')
+            ->get();
+
+        $courseIds = $enrollments
+            ->pluck('course_id')
+            ->unique()
+            ->values();
+
+        $progressByCourseId = $courseIds->isEmpty()
+            ? collect()
+            : LessonProgress::query()
+                ->where('user_id', $user->id)
+                ->whereIn('course_id', $courseIds)
+                ->get()
+                ->groupBy('course_id')
+                ->map(fn ($progressEntries) => $progressEntries->keyBy('lesson_id'));
+
+        $enrolledAtByCourseId = $enrollments
+            ->mapWithKeys(fn ($enrollment): array => [
+                (int) $enrollment->course_id => $enrollment->created_at?->toISOString(),
+            ]);
+
+        $courses = $enrollments
+            ->pluck('course')
+            ->filter(fn ($course): bool => $course instanceof Course)
+            ->map(function (Course $course) use ($progressByCourseId, $enrolledAtByCourseId): array {
+                $data = $this->transformCourse($course, true);
+                $progress = CourseProgressPresenter::summarizeWithProgressByLessonId(
+                    $course,
+                    $progressByCourseId->get($course->id, collect())
+                );
+                $lessonIds = $course->sections
+                    ->flatMap(fn ($section) => $section->lessons->pluck('id')->map(fn ($id) => (string) $id))
+                    ->values();
+                $completedIds = collect($progress['completedLessonIds'] ?? []);
+                $resumeLessonId = $lessonIds
+                    ->first(fn (string $lessonId): bool => ! $completedIds->contains($lessonId))
+                    ?? $lessonIds->first();
+
+                $enrolledAt = $enrolledAtByCourseId->get((int) $course->id);
+
+                $data['progress'] = $progress;
+                $data['resumeLessonId'] = $resumeLessonId;
+                $data['enrolledAt'] = $enrolledAt;
+
+                return $data;
+            })
+            ->values();
+
+        return response()->json([
+            'data' => $courses,
+        ]);
+    }
+
     public function categories(): JsonResponse
     {
         $categories = Course::query()
@@ -137,6 +202,8 @@ class CourseController extends Controller
                         'htmlCode' => $lesson->html_code,
                         'cssCode' => $lesson->css_code,
                         'jsCode' => $lesson->js_code,
+                        'workspaceFiles' => $lesson->workspace_files,
+                        'entryHtmlFileId' => $lesson->entry_html_file_id,
                         'quizQuestions' => $lesson->quiz_questions,
                         'quizPassPercentage' => $lesson->quiz_pass_percentage,
                         'quizRandomizeQuestions' => $lesson->quiz_randomize_questions,
@@ -152,12 +219,12 @@ class CourseController extends Controller
             return true;
         }
 
-        if (! $user || ! $user->email) {
+        if (! $user || ! $user->id) {
             return false;
         }
 
         return $course->enrollments()
-            ->where('email', $user->email)
+            ->where('user_id', $user->id)
             ->where('status', 'completed')
             ->exists();
     }

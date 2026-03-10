@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -9,20 +9,26 @@ import {
   Circle,
   Code2,
   Copy,
+  Folder,
+  FolderOpen,
+  GripVertical,
   ExternalLink,
   Maximize2,
   Menu,
   Minimize2,
+  Plus,
   Play,
   PlayCircle,
   RefreshCw,
   RotateCcw,
+  Trash2,
   Trophy,
   Undo2,
   XCircle,
 } from "lucide-react";
 import CodeHighlightEditor from "@/components/admin/CodeHighlightEditor";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
@@ -36,13 +42,19 @@ import type {
   SaveLessonProgressPayload,
 } from "@/lib/types";
 
-type EditorPanel = "html" | "css" | "js";
 type WorkspaceMode = "split" | "code" | "preview";
 
 interface LessonCodeState {
   html: string;
   css: string;
   js: string;
+}
+
+interface WorkspaceFile {
+  id: string;
+  name: string;
+  language: "html" | "css" | "js";
+  content: string;
 }
 
 interface QuizQuestionState {
@@ -74,6 +86,17 @@ interface CodeValidationFeedback {
 const normalizeLanguage = (language?: string | null) =>
   (language || "html").trim().toLowerCase();
 
+const isCodePracticeLesson = (lesson: Lesson): boolean => {
+  if (lesson.type === "quiz" || lesson.type === "text" || lesson.type === "video") return false;
+  const language = normalizeLanguage(lesson.language);
+
+  return (
+    lesson.type === "code"
+    || Boolean(lesson.htmlCode || lesson.cssCode || lesson.jsCode)
+    || ["html", "css", "javascript", "js"].includes(language)
+  );
+};
+
 const normalizePassPercentage = (value?: number | null): number => {
   if (!Number.isFinite(value)) return 80;
   return Math.max(1, Math.min(100, Math.round(Number(value))));
@@ -103,17 +126,25 @@ const defaultInstructions = (lesson: Lesson) => {
 
 const hasHtmlTags = (value: string) => /<\/?[a-z][\s\S]*>/i.test(value);
 
-const toInstructionPlainText = (value: string): string =>
+const decodeHtmlEntities = (value: string): string =>
   value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#x27;|&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, "&");
+
+const toInstructionPlainText = (value: string): string =>
+  decodeHtmlEntities(value
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
     .replace(/<li[^>]*>/gi, "\n- ")
     .replace(/<\/(p|div|h1|h2|h3|h4|h5|h6|li|ul|ol|section|article|pre)>/gi, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
     .replace(/\r/g, "")
     .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\n{3,}/g, "\n\n"))
     .trim();
 
 const extractChecklistItems = (value: string): string[] => {
@@ -155,42 +186,109 @@ const truncateCodeSnippet = (value: string, maxLines = 16): string => {
 
 interface ParsedLessonContent {
   theory: string;
+  objectives: string[];
   instructions: string[];
-  examples: string[];
+  examples: LessonExampleSnippet[];
+  hints: string[];
+  tests: CodeValidationRule[];
   hint: string | null;
+}
+
+interface LessonExampleSnippet {
+  code: string;
+  language: "html" | "css" | "js";
+}
+
+type CodeValidationRuleKind =
+  | "html_includes"
+  | "css_includes"
+  | "js_includes"
+  | "selector_exists"
+  | "text_includes";
+
+interface CodeValidationRule {
+  kind: CodeValidationRuleKind;
+  value: string;
 }
 
 const normalizeSectionHeading = (line: string): string =>
   line
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-const extractCodeExamplesFromContent = (value: string): string[] => {
-  const examples: string[] = [];
+const normalizeExampleLanguage = (value?: string | null): LessonExampleSnippet["language"] => {
+  const language = (value || "").trim().toLowerCase();
+  if (["js", "javascript", "ts", "typescript"].includes(language)) return "js";
+  if (["css", "scss", "less"].includes(language)) return "css";
+  return "html";
+};
 
-  const fencedMatches = value.match(/```(?:[a-z0-9_-]+)?\n([\s\S]*?)```/gi) || [];
-  fencedMatches.forEach((block) => {
-    const cleaned = block
-      .replace(/```(?:[a-z0-9_-]+)?\n?/i, "")
-      .replace(/```$/i, "")
-      .trim();
-    if (cleaned) {
-      examples.push(cleaned);
-    }
-  });
+const inferExampleLanguage = (snippet: string): LessonExampleSnippet["language"] => {
+  const source = snippet.trim();
+  if (!source) return "html";
+
+  if (/<!doctype html/i.test(source) || /<\/?[a-z][\s\S]*>/i.test(source)) {
+    return "html";
+  }
+
+  if (
+    /@media|@keyframes|@supports/i.test(source)
+    || /\b[a-z-]+\s*:\s*[^;]+;/i.test(source)
+    || /^\s*[.#]?[a-z0-9_-]+\s*\{[\s\S]*\}\s*$/im.test(source)
+  ) {
+    return "css";
+  }
+
+  if (
+    /\b(const|let|var|function|return|if|else|for|while|class|new|import|export|await|async)\b/.test(source)
+    || /=>|document\.|window\.|console\./.test(source)
+  ) {
+    return "js";
+  }
+
+  return "html";
+};
+
+const stripCodeBlocksForTheory = (value: string): string =>
+  value
+    .replace(/```[\s\S]*?```/g, "\n")
+    .replace(/<pre[\s\S]*?>[\s\S]*?<\/pre>/gi, "\n")
+    .replace(/^```.*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n");
+
+const extractCodeExamplesFromContent = (value: string): LessonExampleSnippet[] => {
+  const examples: LessonExampleSnippet[] = [];
+  const pushExample = (code: string, language?: string | null) => {
+    const cleaned = decodeHtmlEntities(code).trim();
+    if (!cleaned) return;
+    const normalizedLanguage = language ? normalizeExampleLanguage(language) : inferExampleLanguage(cleaned);
+    examples.push({
+      code: cleaned,
+      language: normalizedLanguage,
+    });
+  };
+
+  const fencedRegex = /```([a-z0-9_-]+)?\n([\s\S]*?)```/gi;
+  let fencedMatch = fencedRegex.exec(value);
+  while (fencedMatch) {
+    pushExample(fencedMatch[2] || "", fencedMatch[1] || null);
+    fencedMatch = fencedRegex.exec(value);
+  }
 
   const preMatches = value.match(/<pre[\s\S]*?>[\s\S]*?<\/pre>/gi) || [];
   preMatches.forEach((block) => {
     const cleaned = toInstructionPlainText(block).trim();
-    if (cleaned) {
-      examples.push(cleaned);
-    }
+    const languageMatch = block.match(/(?:language-|lang=|data-language=["']?)([a-z0-9_-]+)/i);
+    pushExample(cleaned, languageMatch?.[1] || null);
   });
 
   if (examples.length > 0) {
-    return Array.from(new Set(examples)).slice(0, 3);
+    return Array.from(new Map(examples.map((example) => [`${example.language}:${example.code}`, example])).values())
+      .slice(0, 3);
   }
 
   const plain = hasHtmlTags(value) ? toInstructionPlainText(value) : value;
@@ -223,7 +321,43 @@ const extractCodeExamplesFromContent = (value: string): string[] => {
   return candidateBlocks
     .map((block) => block.trim())
     .filter((block) => block.length > 0)
-    .slice(0, 2);
+    .slice(0, 2)
+    .map((code) => ({
+      code,
+      language: inferExampleLanguage(code),
+    }));
+};
+
+const parseValidationRuleLine = (line: string): CodeValidationRule | null => {
+  const normalized = line.replace(/^[-*]\s*/, "").trim();
+  if (!normalized) return null;
+
+  const htmlMatch = normalized.match(/^(html)\s+(?:contains|includes?|contem|inclui)\s*:\s*(.+)$/i);
+  if (htmlMatch) {
+    return { kind: "html_includes", value: htmlMatch[2].trim() };
+  }
+
+  const cssMatch = normalized.match(/^(css)\s+(?:contains|includes?|contem|inclui)\s*:\s*(.+)$/i);
+  if (cssMatch) {
+    return { kind: "css_includes", value: cssMatch[2].trim() };
+  }
+
+  const jsMatch = normalized.match(/^(js|javascript)\s+(?:contains|includes?|contem|inclui)\s*:\s*(.+)$/i);
+  if (jsMatch) {
+    return { kind: "js_includes", value: jsMatch[2].trim() };
+  }
+
+  const selectorMatch = normalized.match(/^(selector|dom|element|elemento|seletor)\s+(?:exists?|existe)\s*:\s*(.+)$/i);
+  if (selectorMatch) {
+    return { kind: "selector_exists", value: selectorMatch[2].trim() };
+  }
+
+  const textMatch = normalized.match(/^(text|texto)\s+(?:contains|includes?|contem|inclui)\s*:\s*(.+)$/i);
+  if (textMatch) {
+    return { kind: "text_includes", value: textMatch[2].trim() };
+  }
+
+  return null;
 };
 
 const parseLessonContent = (value: string): ParsedLessonContent => {
@@ -231,22 +365,28 @@ const parseLessonContent = (value: string): ParsedLessonContent => {
   if (!source) {
     return {
       theory: "",
+      objectives: [],
       instructions: [],
       examples: [],
+      hints: [],
+      tests: [],
       hint: null,
     };
   }
 
-  const plain = hasHtmlTags(source) ? toInstructionPlainText(source) : source;
+  const sourceWithoutCode = stripCodeBlocksForTheory(source);
+  const plain = hasHtmlTags(sourceWithoutCode) ? toInstructionPlainText(sourceWithoutCode) : sourceWithoutCode;
   const lines = plain
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
   const theoryLines: string[] = [];
+  const objectiveLines: string[] = [];
   const instructionLines: string[] = [];
   const hintLines: string[] = [];
-  let currentSection: "theory" | "instructions" | "hint" = "theory";
+  const testLines: string[] = [];
+  let currentSection: "theory" | "objectives" | "instructions" | "hint" | "tests" | "examples" = "theory";
 
   lines.forEach((line) => {
     const heading = normalizeSectionHeading(line.replace(/:$/, ""));
@@ -258,13 +398,41 @@ const parseLessonContent = (value: string): ParsedLessonContent => {
       return;
     }
 
+    if (/^(objetivos|objetivo|objectives|objective|goals|goal)$/.test(heading)) {
+      currentSection = "objectives";
+      return;
+    }
+
     if (/^(dica|dicas|hint|hints)$/.test(heading)) {
       currentSection = "hint";
       return;
     }
 
+    if (/^(teoria|theory|learn)$/.test(heading)) {
+      currentSection = "theory";
+      return;
+    }
+
+    if (/^(exemplo|exemplos|example|examples)$/.test(heading)) {
+      currentSection = "examples";
+      return;
+    }
+
+    if (/^(testes|teste|tests|test|validation|validacao)$/.test(heading)) {
+      currentSection = "tests";
+      return;
+    }
+
     if (/^(concept review|revisao|resumo|conceptos chave|conceitos chave)$/.test(heading)) {
       currentSection = "theory";
+      return;
+    }
+
+    if (currentSection === "objectives") {
+      const cleaned = line.replace(/^(\d+[.)]\s+|[-*]\s+)/, "").trim();
+      if (cleaned) {
+        objectiveLines.push(cleaned);
+      }
       return;
     }
 
@@ -277,7 +445,19 @@ const parseLessonContent = (value: string): ParsedLessonContent => {
     }
 
     if (currentSection === "hint") {
-      hintLines.push(line);
+      const cleaned = line.replace(/^(\d+[.)]\s+|[-*]\s+)/, "").trim();
+      if (cleaned) {
+        hintLines.push(cleaned);
+      }
+      return;
+    }
+
+    if (currentSection === "tests") {
+      testLines.push(line);
+      return;
+    }
+
+    if (currentSection === "examples") {
       return;
     }
 
@@ -286,35 +466,85 @@ const parseLessonContent = (value: string): ParsedLessonContent => {
 
   const theory = theoryLines.join("\n\n").trim() || plain.trim();
   const instructions = instructionLines.length > 0 ? instructionLines : extractChecklistItems(source);
-  const hint = hintLines.join(" ").trim() || extractLessonTip(source);
+  const objectives = objectiveLines.length > 0 ? objectiveLines : instructions.slice(0, 2);
+  const fallbackHint = extractLessonTip(source);
+  const hints = hintLines.length > 0
+    ? hintLines
+    : fallbackHint
+      ? [fallbackHint]
+      : [];
+  const tests = testLines
+    .map(parseValidationRuleLine)
+    .filter((rule): rule is CodeValidationRule => Boolean(rule))
+    .slice(0, 12);
   const examples = extractCodeExamplesFromContent(source);
 
   return {
     theory,
+    objectives,
     instructions,
     examples,
-    hint,
+    hints,
+    tests,
+    hint: hints[0] || null,
   };
 };
-
-const defaultHtml = (title: string) =>
-  `<main class="lesson-card">\n  <h1>${title}</h1>\n  <p>Edita HTML, CSS e JS e depois clica em Executar.</p>\n  <button id="action">Testar</button>\n</main>`;
-
-const defaultCss = () =>
-  `body {\n  font-family: ui-sans-serif, system-ui, -apple-system;\n  padding: 1.5rem;\n}\n\n.lesson-card {\n  border: 1px solid #e5e7eb;\n  border-radius: 12px;\n  padding: 1rem;\n}\n\nbutton {\n  background: #f59e0b;\n  border: none;\n  border-radius: 8px;\n  color: white;\n  cursor: pointer;\n  padding: 0.5rem 0.8rem;\n}`;
-
-const defaultJs = () =>
-  `const btn = document.getElementById("action");\nif (btn) {\n  btn.addEventListener("click", () => {\n    btn.textContent = "Clicado";\n  });\n}\nconsole.log("Lição pronta");`;
 
 const resolveLessonCode = (lesson: Lesson): LessonCodeState => {
   const language = normalizeLanguage(lesson.language);
   const starter = lesson.starterCode || "";
 
   return {
-    html: lesson.htmlCode || (language === "html" ? starter : defaultHtml(lesson.title)),
-    css: lesson.cssCode || (language === "css" ? starter : defaultCss()),
-    js: lesson.jsCode || (["js", "javascript"].includes(language) ? starter : defaultJs()),
+    html: lesson.htmlCode || (language === "html" ? starter : ""),
+    css: lesson.cssCode || (language === "css" ? starter : ""),
+    js: lesson.jsCode || (["js", "javascript"].includes(language) ? starter : ""),
   };
+};
+
+const resolveWorkspaceFiles = (lesson: Lesson): WorkspaceFile[] => {
+  const baseline = resolveLessonCode(lesson);
+
+  return [
+    {
+      id: `${lesson.id}-index-html`,
+      name: "index.html",
+      language: "html",
+      content: baseline.html,
+    },
+    {
+      id: `${lesson.id}-style-css`,
+      name: "style.css",
+      language: "css",
+      content: baseline.css,
+    },
+    {
+      id: `${lesson.id}-script-js`,
+      name: "script.js",
+      language: "js",
+      content: baseline.js,
+    },
+  ];
+};
+
+const buildCodeFromWorkspaceFiles = (files: WorkspaceFile[], entryHtmlFileId?: string): LessonCodeState => {
+  const htmlFile = files.find((file) => file.id === entryHtmlFileId && file.language === "html")
+    || files.find((file) => file.name.toLowerCase() === "index.html" && file.language === "html")
+    || files.find((file) => file.language === "html");
+  const cssFiles = files.filter((file) => file.language === "css");
+  const jsFiles = files.filter((file) => file.language === "js");
+
+  return {
+    html: htmlFile?.content || "",
+    css: cssFiles.map((file) => file.content).filter(Boolean).join("\n\n"),
+    js: jsFiles.map((file) => file.content).filter(Boolean).join("\n\n"),
+  };
+};
+
+const languageFromFileName = (name: string): WorkspaceFile["language"] => {
+  const normalized = name.trim().toLowerCase();
+  if (normalized.endsWith(".css")) return "css";
+  if (normalized.endsWith(".js") || normalized.endsWith(".mjs") || normalized.endsWith(".ts")) return "js";
+  return "html";
 };
 
 const buildPreviewDoc = (code: LessonCodeState) => {
@@ -398,6 +628,129 @@ const toEmbedVideoUrl = (url?: string | null): string | null => {
   }
 };
 
+const normalizeContains = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+const deriveValidationRulesFromLesson = (lesson: Lesson): CodeValidationRule[] => {
+  const rules: CodeValidationRule[] = [];
+  const seen = new Set<string>();
+
+  const pushRule = (rule: CodeValidationRule) => {
+    const key = `${rule.kind}:${rule.value}`.toLowerCase();
+    if (!rule.value.trim() || seen.has(key)) return;
+    seen.add(key);
+    rules.push(rule);
+  };
+
+  if (lesson.htmlCode) {
+    const idMatches = Array.from(lesson.htmlCode.matchAll(/id\s*=\s*["']([^"']+)["']/gi));
+    idMatches.slice(0, 4).forEach((match) => {
+      pushRule({ kind: "selector_exists", value: `#${match[1].trim()}` });
+    });
+
+    const classMatches = Array.from(lesson.htmlCode.matchAll(/class\s*=\s*["']([^"']+)["']/gi));
+    classMatches.slice(0, 4).forEach((match) => {
+      const className = match[1].trim().split(/\s+/).find(Boolean);
+      if (className) {
+        pushRule({ kind: "selector_exists", value: `.${className}` });
+      }
+    });
+
+    if (rules.length < 2) {
+      const tagMatches = Array.from(lesson.htmlCode.matchAll(/<([a-z][a-z0-9-]*)\b/gi));
+      tagMatches
+        .map((match) => match[1].toLowerCase())
+        .filter((tag) => !["html", "head", "body", "meta", "title", "style", "script", "link"].includes(tag))
+        .slice(0, 3)
+        .forEach((tag) => {
+          pushRule({ kind: "html_includes", value: `<${tag}` });
+        });
+    }
+  }
+
+  if (lesson.cssCode) {
+    const selectorMatches = Array.from(lesson.cssCode.matchAll(/(^|\n)\s*([^@\n][^{]+)\{/g));
+    selectorMatches.slice(0, 3).forEach((match) => {
+      const selector = match[2].split(",")[0]?.trim();
+      if (selector && selector.length < 80) {
+        pushRule({ kind: "css_includes", value: selector });
+      }
+    });
+  }
+
+  if (lesson.jsCode) {
+    const jsSignals = [
+      "addEventListener",
+      "querySelector",
+      "getElementById",
+      "classList",
+      "textContent",
+      "innerHTML",
+    ];
+
+    jsSignals.forEach((signal) => {
+      if (lesson.jsCode?.includes(signal)) {
+        pushRule({ kind: "js_includes", value: signal });
+      }
+    });
+  }
+
+  return rules.slice(0, 8);
+};
+
+const evaluateCodeRules = (code: LessonCodeState, rules: CodeValidationRule[]): string[] => {
+  if (rules.length === 0) return [];
+
+  const failures: string[] = [];
+  const normalizedHtml = normalizeContains(code.html);
+  const normalizedCss = normalizeContains(code.css);
+  const normalizedJs = normalizeContains(code.js);
+
+  const parser = new DOMParser();
+  const documentNode = parser.parseFromString(code.html || "<body></body>", "text/html");
+  const bodyText = normalizeContains(documentNode.body?.textContent || "");
+
+  rules.forEach((rule) => {
+    const expected = normalizeContains(rule.value);
+    if (!expected) return;
+
+    if (rule.kind === "html_includes" && !normalizedHtml.includes(expected)) {
+      failures.push(`HTML deve incluir: ${rule.value}`);
+      return;
+    }
+
+    if (rule.kind === "css_includes" && !normalizedCss.includes(expected)) {
+      failures.push(`CSS deve incluir: ${rule.value}`);
+      return;
+    }
+
+    if (rule.kind === "js_includes" && !normalizedJs.includes(expected)) {
+      failures.push(`JS deve incluir: ${rule.value}`);
+      return;
+    }
+
+    if (rule.kind === "selector_exists") {
+      try {
+        if (!documentNode.querySelector(rule.value)) {
+          failures.push(`Elemento esperado não encontrado: ${rule.value}`);
+        }
+      } catch {
+        failures.push(`Seletor inválido na validação: ${rule.value}`);
+      }
+      return;
+    }
+
+    if (rule.kind === "text_includes" && !bodyText.includes(expected)) {
+      failures.push(`Texto esperado não encontrado: ${rule.value}`);
+    }
+  });
+
+  return failures;
+};
+
 const shuffleArray = <T,>(items: T[]): T[] => {
   const next = [...items];
   for (let index = next.length - 1; index > 0; index -= 1) {
@@ -466,12 +819,18 @@ const StudentPlayerPage = () => {
     Record<string, CodeValidationFeedback>
   >({});
   const [progressHydrated, setProgressHydrated] = useState(false);
-  const [codeByLesson, setCodeByLesson] = useState<Record<string, LessonCodeState>>({});
+  const [workspaceFilesByLesson, setWorkspaceFilesByLesson] = useState<Record<string, WorkspaceFile[]>>({});
+  const [activeFileByLesson, setActiveFileByLesson] = useState<Record<string, string>>({});
+  const [entryHtmlFileByLesson, setEntryHtmlFileByLesson] = useState<Record<string, string>>({});
+  const [fileComposerOpen, setFileComposerOpen] = useState(false);
+  const [newFileName, setNewFileName] = useState("");
+  const [draggingFileId, setDraggingFileId] = useState<string | null>(null);
   const [quizStateByLesson, setQuizStateByLesson] = useState<Record<string, QuizAttemptState>>({});
   const [previewDoc, setPreviewDoc] = useState("");
   const [previewVersion, setPreviewVersion] = useState(0);
-  const [activePanel, setActivePanel] = useState<EditorPanel>("html");
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("split");
+  const [filesPanelOpen, setFilesPanelOpen] = useState(false);
+  const [hintRevealCountByLesson, setHintRevealCountByLesson] = useState<Record<string, number>>({});
   const [lessonPaneWidth, setLessonPaneWidth] = useState(32);
   const [editorPaneRatio, setEditorPaneRatio] = useState(52);
   const [dragTarget, setDragTarget] = useState<"lesson" | "editor" | null>(null);
@@ -529,15 +888,15 @@ const StudentPlayerPage = () => {
 
   const isCodeLesson = useMemo(() => {
     if (!currentLesson) return false;
-    if (currentLesson.type === "quiz" || currentLesson.type === "text" || currentLesson.type === "video") return false;
-    const language = normalizeLanguage(currentLesson.language);
-
-    return (
-      currentLesson.type === "code"
-      || Boolean(currentLesson.htmlCode || currentLesson.cssCode || currentLesson.jsCode)
-      || ["html", "css", "javascript", "js"].includes(language)
-    );
+    return isCodePracticeLesson(currentLesson);
   }, [currentLesson]);
+  const isVideoLesson = currentLesson?.type === "video";
+
+  useEffect(() => {
+    if (!isCodeLesson) {
+      setFilesPanelOpen(false);
+    }
+  }, [isCodeLesson]);
 
   const quizQuestions = useMemo(() => {
     if (!currentLesson || !isQuizLesson) return [];
@@ -559,16 +918,24 @@ const StudentPlayerPage = () => {
     [quizPassPercentage, quizQuestions],
   );
 
+  const currentWorkspaceFiles = useMemo(() => {
+    if (!currentLesson || !isCodeLesson) return [];
+    return workspaceFilesByLesson[currentLesson.id] || resolveWorkspaceFiles(currentLesson);
+  }, [currentLesson, isCodeLesson, workspaceFilesByLesson]);
+
+  const activeFileId = currentLesson ? activeFileByLesson[currentLesson.id] : undefined;
+  const activeFile = currentWorkspaceFiles.find((file) => file.id === activeFileId) || currentWorkspaceFiles[0] || null;
+
   const currentCode = useMemo(() => {
-    if (!currentLesson) {
+    if (!isCodeLesson) {
       return { html: "", css: "", js: "" };
     }
 
-    return codeByLesson[currentLesson.id] || resolveLessonCode(currentLesson);
-  }, [codeByLesson, currentLesson]);
-  const currentHtml = currentCode.html;
-  const currentCss = currentCode.css;
-  const currentJs = currentCode.js;
+    return buildCodeFromWorkspaceFiles(
+      currentWorkspaceFiles,
+      currentLesson ? entryHtmlFileByLesson[currentLesson.id] : undefined,
+    );
+  }, [currentLesson, currentWorkspaceFiles, entryHtmlFileByLesson, isCodeLesson]);
 
   const currentQuizState = currentLesson ? quizStateByLesson[currentLesson.id] : undefined;
 
@@ -620,15 +987,36 @@ const StudentPlayerPage = () => {
   useEffect(() => {
     if (!currentLesson || !isCodeLesson) return;
 
-    setCodeByLesson((prev) => {
+    setWorkspaceFilesByLesson((prev) => {
       if (prev[currentLesson.id]) return prev;
 
       return {
         ...prev,
-        [currentLesson.id]: resolveLessonCode(currentLesson),
+        [currentLesson.id]: resolveWorkspaceFiles(currentLesson),
+      };
+    });
+
+    setActiveFileByLesson((prev) => {
+      if (prev[currentLesson.id]) return prev;
+      return {
+        ...prev,
+        [currentLesson.id]: `${currentLesson.id}-index-html`,
+      };
+    });
+
+    setEntryHtmlFileByLesson((prev) => {
+      if (prev[currentLesson.id]) return prev;
+      return {
+        ...prev,
+        [currentLesson.id]: `${currentLesson.id}-index-html`,
       };
     });
   }, [currentLesson, isCodeLesson]);
+
+  useEffect(() => {
+    setFileComposerOpen(false);
+    setNewFileName("");
+  }, [currentLesson?.id]);
 
   useEffect(() => {
     if (!currentLesson || !isQuizLesson) return;
@@ -670,16 +1058,16 @@ const StudentPlayerPage = () => {
     const timer = window.setTimeout(() => {
       setPreviewDoc(
         buildPreviewDoc({
-          html: currentHtml,
-          css: currentCss,
-          js: currentJs,
+          html: currentCode.html,
+          css: currentCode.css,
+          js: currentCode.js,
         }),
       );
       setPreviewVersion((prev) => prev + 1);
     }, 220);
 
     return () => window.clearTimeout(timer);
-  }, [currentLesson, currentHtml, currentCss, currentJs, isCodeLesson]);
+  }, [currentLesson, currentCode.css, currentCode.html, currentCode.js, isCodeLesson]);
 
   useEffect(() => {
     if (!currentLesson || !isCodeLesson) return;
@@ -818,14 +1206,20 @@ const StudentPlayerPage = () => {
     });
   };
 
-  const updateCodePanel = (panel: EditorPanel, value: string) => {
-    setCodeByLesson((prev) => ({
-      ...prev,
-      [currentLesson.id]: {
-        ...(prev[currentLesson.id] || resolveLessonCode(currentLesson)),
-        [panel]: value,
-      },
-    }));
+  const updateActiveFileContent = (value: string) => {
+    if (!isCodeLesson || !activeFile) return;
+
+    setWorkspaceFilesByLesson((prev) => {
+      const currentFiles = prev[currentLesson.id] || resolveWorkspaceFiles(currentLesson);
+      return {
+        ...prev,
+        [currentLesson.id]: currentFiles.map((file) => (
+          file.id === activeFile.id
+            ? { ...file, content: value }
+            : file
+        )),
+      };
+    });
   };
 
   const runCode = () => {
@@ -850,28 +1244,38 @@ const StudentPlayerPage = () => {
   };
 
   const copyCurrentPanel = () => {
-    if (!isCodeLesson) return;
-    void copyToClipboard(currentCode[activePanel], `Conteúdo de ${activePanel.toUpperCase()} copiado.`);
+    if (!isCodeLesson || !activeFile) return;
+    void copyToClipboard(activeFile.content, `Conteúdo de ${activeFile.name} copiado.`);
   };
 
   const resetCurrentPanel = () => {
-    if (!isCodeLesson) return;
+    if (!isCodeLesson || !activeFile) return;
 
-    const baseline = resolveLessonCode(currentLesson);
-    updateCodePanel(activePanel, baseline[activePanel]);
+    const baselineFiles = resolveWorkspaceFiles(currentLesson);
+    const fallbackBaseline = baselineFiles.find((file) => file.language === activeFile.language)?.content || "";
+    const baselineContent = baselineFiles.find((file) => file.name === activeFile.name)?.content ?? fallbackBaseline;
+    updateActiveFileContent(baselineContent);
     toast({
       title: "Painel reposto",
-      description: `${activePanel.toUpperCase()} voltou ao estado inicial da lição.`,
+      description: `${activeFile.name} voltou ao estado inicial da lição.`,
     });
   };
 
   const resetLessonCode = () => {
     if (!isCodeLesson) return;
 
-    const baseline = resolveLessonCode(currentLesson);
-    setCodeByLesson((prev) => ({
+    const baseline = resolveWorkspaceFiles(currentLesson);
+    setWorkspaceFilesByLesson((prev) => ({
       ...prev,
       [currentLesson.id]: baseline,
+    }));
+    setActiveFileByLesson((prev) => ({
+      ...prev,
+      [currentLesson.id]: baseline[0]?.id || `${currentLesson.id}-index-html`,
+    }));
+    setEntryHtmlFileByLesson((prev) => ({
+      ...prev,
+      [currentLesson.id]: `${currentLesson.id}-index-html`,
     }));
 
     setCodeValidationFeedbackByLesson((prev) => {
@@ -886,12 +1290,161 @@ const StudentPlayerPage = () => {
       codeIsCorrect: false,
     });
 
-    setPreviewDoc(buildPreviewDoc(baseline));
+    setPreviewDoc(buildPreviewDoc(buildCodeFromWorkspaceFiles(baseline)));
     setPreviewVersion((prev) => prev + 1);
     toast({
       title: "Lição reiniciada",
       description: "Código e validação foram repostos para tentares novamente.",
     });
+  };
+
+  const addWorkspaceFile = () => {
+    if (!isCodeLesson) return;
+    setNewFileName(`file-${currentWorkspaceFiles.length + 1}.html`);
+    setFileComposerOpen(true);
+  };
+
+  const createWorkspaceFile = () => {
+    if (!isCodeLesson || !currentLesson) return;
+
+    const normalizedName = newFileName.trim();
+    if (!normalizedName) return;
+
+    const alreadyExists = currentWorkspaceFiles.some(
+      (file) => file.name.toLowerCase() === normalizedName.toLowerCase(),
+    );
+    if (alreadyExists) {
+      toast({
+        variant: "destructive",
+        title: "Nome duplicado",
+        description: "Já existe um ficheiro com esse nome.",
+      });
+      return;
+    }
+
+    const language = languageFromFileName(normalizedName);
+    const newFile: WorkspaceFile = {
+      id: `${currentLesson.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: normalizedName,
+      language,
+      content: "",
+    };
+
+    setWorkspaceFilesByLesson((prev) => ({
+      ...prev,
+      [currentLesson.id]: [...(prev[currentLesson.id] || resolveWorkspaceFiles(currentLesson)), newFile],
+    }));
+    setActiveFileByLesson((prev) => ({
+      ...prev,
+      [currentLesson.id]: newFile.id,
+    }));
+    setFileComposerOpen(false);
+    setNewFileName("");
+  };
+
+  const renameActiveFile = () => {
+    if (!isCodeLesson || !currentLesson || !activeFile) return;
+
+    const nextName = window.prompt("Novo nome do ficheiro", activeFile.name);
+    if (!nextName) return;
+
+    const normalizedName = nextName.trim();
+    if (!normalizedName || normalizedName === activeFile.name) return;
+
+    const exists = currentWorkspaceFiles.some(
+      (file) => file.id !== activeFile.id && file.name.toLowerCase() === normalizedName.toLowerCase(),
+    );
+    if (exists) {
+      toast({
+        variant: "destructive",
+        title: "Nome duplicado",
+        description: "Já existe um ficheiro com esse nome.",
+      });
+      return;
+    }
+
+    setWorkspaceFilesByLesson((prev) => ({
+      ...prev,
+      [currentLesson.id]: (prev[currentLesson.id] || resolveWorkspaceFiles(currentLesson)).map((file) => (
+        file.id === activeFile.id
+          ? { ...file, name: normalizedName, language: languageFromFileName(normalizedName) }
+          : file
+      )),
+    }));
+
+    if (entryHtmlFileByLesson[currentLesson.id] === activeFile.id) {
+      const nextLang = languageFromFileName(normalizedName);
+      if (nextLang !== "html") {
+        const fallbackHtml = currentWorkspaceFiles.find((file) => file.id !== activeFile.id && file.language === "html");
+        setEntryHtmlFileByLesson((prev) => ({
+          ...prev,
+          [currentLesson.id]: fallbackHtml?.id || "",
+        }));
+      }
+    }
+  };
+
+  const deleteActiveFile = () => {
+    if (!isCodeLesson || !currentLesson || !activeFile) return;
+    if (currentWorkspaceFiles.length <= 1) {
+      toast({
+        variant: "destructive",
+        title: "Ação bloqueada",
+        description: "Mantém pelo menos um ficheiro na prática.",
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(`Eliminar o ficheiro ${activeFile.name}?`);
+    if (!confirmed) return;
+
+    const nextFiles = currentWorkspaceFiles.filter((file) => file.id !== activeFile.id);
+
+    setWorkspaceFilesByLesson((prev) => ({
+      ...prev,
+      [currentLesson.id]: nextFiles,
+    }));
+    setActiveFileByLesson((prev) => ({
+      ...prev,
+      [currentLesson.id]: nextFiles[0]?.id || "",
+    }));
+
+    if (entryHtmlFileByLesson[currentLesson.id] === activeFile.id) {
+      const nextEntry = nextFiles.find((file) => file.language === "html");
+      setEntryHtmlFileByLesson((prev) => ({
+        ...prev,
+        [currentLesson.id]: nextEntry?.id || "",
+      }));
+    }
+  };
+
+  const moveWorkspaceFile = (draggedFileId: string, targetFileId: string) => {
+    if (!isCodeLesson || !currentLesson || draggedFileId === targetFileId) return;
+
+    const currentFiles = currentWorkspaceFiles;
+    const fromIndex = currentFiles.findIndex((file) => file.id === draggedFileId);
+    const toIndex = currentFiles.findIndex((file) => file.id === targetFileId);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const nextFiles = [...currentFiles];
+    const [moved] = nextFiles.splice(fromIndex, 1);
+    nextFiles.splice(toIndex, 0, moved);
+
+    setWorkspaceFilesByLesson((prev) => ({
+      ...prev,
+      [currentLesson.id]: nextFiles,
+    }));
+  };
+
+  const markAsEntryHtml = (fileId: string) => {
+    if (!currentLesson) return;
+    const file = currentWorkspaceFiles.find((candidate) => candidate.id === fileId);
+    if (!file || file.language !== "html") return;
+
+    setEntryHtmlFileByLesson((prev) => ({
+      ...prev,
+      [currentLesson.id]: fileId,
+    }));
   };
 
   const previewGoBack = () => {
@@ -991,6 +1544,16 @@ const StudentPlayerPage = () => {
         feedbackMessage = `Resultado incorreto: ${
           validationError instanceof Error ? validationError.message : "erro de sintaxe em JavaScript."
         }`;
+      }
+    }
+
+    if (!feedbackMessage) {
+      const fallbackRules = deriveValidationRulesFromLesson(currentLesson);
+      const effectiveRules = lessonContentRules.length > 0 ? lessonContentRules : fallbackRules;
+      const failures = evaluateCodeRules(currentCode, effectiveRules);
+
+      if (failures.length > 0) {
+        feedbackMessage = `Resultado incorreto: ${failures.slice(0, 2).join(" ")}`;
       }
     }
 
@@ -1159,6 +1722,42 @@ const StudentPlayerPage = () => {
     });
   };
 
+  const isGateLessonUnlocked = (lesson: Lesson): boolean => {
+    const progressEntry = lessonProgressByLesson[lesson.id];
+
+    if (lesson.type === "quiz") {
+      return Boolean(
+        progressEntry?.quizPassed
+        || progressEntry?.status === "completed"
+        || quizStateByLesson[lesson.id]?.passed,
+      );
+    }
+
+    if (isCodePracticeLesson(lesson)) {
+      return Boolean(
+        progressEntry?.codeIsCorrect
+        || progressEntry?.status === "completed"
+        || codeValidationFeedbackByLesson[lesson.id]?.isCorrect,
+      );
+    }
+
+    return true;
+  };
+
+  const firstLockedGateIndex = progressHydrated
+    ? allLessons.findIndex((lesson) => {
+      if (lesson.type !== "quiz" && !isCodePracticeLesson(lesson)) {
+        return false;
+      }
+
+      return !isGateLessonUnlocked(lesson);
+    })
+    : -1;
+
+  const maxUnlockedLessonIndex = firstLockedGateIndex === -1
+    ? Math.max(0, allLessons.length - 1)
+    : firstLockedGateIndex;
+
   const desktopLayoutStyle = (() => {
     if (isMobile) return undefined;
 
@@ -1195,7 +1794,7 @@ const StudentPlayerPage = () => {
 
   const isWorkspaceFocused = isCodeLesson && !isMobile && workspaceMode !== "split";
   const showLessonPane = !isQuizLesson && (!isCodeLesson || isMobile || workspaceMode === "split");
-  const showMiddlePane = isQuizLesson || isCodeLesson;
+  const showMiddlePane = isQuizLesson || (isCodeLesson && (isMobile || workspaceMode !== "preview")) || (!isVideoLesson && !isCodeLesson && !isQuizLesson);
   const showPreviewPane = !isQuizLesson && !isTextLesson && (isMobile || !isCodeLesson || workspaceMode !== "code");
   const quizPassedFromProgress = Boolean(currentProgress?.quizPassed || currentProgress?.status === "completed");
   const quizAdvanceLocked = Boolean(isQuizLesson && !quizPassedFromProgress && !currentQuizState?.passed);
@@ -1203,9 +1802,23 @@ const StudentPlayerPage = () => {
   const advancementLocked = quizAdvanceLocked || codeAdvanceLocked;
   const scoreCircleValue = currentQuizState?.score ?? 0;
   const instructionChecklist = parsedLessonContent.instructions;
+  const lessonObjectives = parsedLessonContent.objectives;
+  const lessonHints = parsedLessonContent.hints;
   const lessonTip = parsedLessonContent.hint;
+  const lessonContentRules = parsedLessonContent.tests;
   const lessonExamples = parsedLessonContent.examples;
   const lessonTheory = parsedLessonContent.theory || instructionContent;
+  const currentHintRevealCount = currentLesson ? (hintRevealCountByLesson[currentLesson.id] || 0) : 0;
+  const visibleHints = lessonHints.slice(0, currentHintRevealCount);
+  const currentQuizQuestionAnswered = Boolean(
+    currentQuizQuestion && currentQuizState?.selectedAnswers[currentQuizQuestion.id] !== undefined,
+  );
+  const quizHasUnanswered = orderedQuizQuestions.some(
+    (question) => currentQuizState?.selectedAnswers[question.id] === undefined,
+  );
+  const nextLessonBlocked = Boolean(
+    nextLesson && (lessonIndexById[nextLesson.id] ?? 0) > maxUnlockedLessonIndex,
+  );
   const lessonTypeLabel = currentLesson.type === "video"
     ? "Vídeo"
     : currentLesson.type === "quiz"
@@ -1213,6 +1826,13 @@ const StudentPlayerPage = () => {
       : currentLesson.type === "text"
         ? "Teoria"
         : "Prática";
+
+  if (progressHydrated && currentIndex > maxUnlockedLessonIndex) {
+    const fallbackLesson = allLessons[maxUnlockedLessonIndex] || allLessons[0];
+    if (fallbackLesson) {
+      return <Navigate to={`/student/${course.id}/${fallbackLesson.id}`} replace />;
+    }
+  }
 
   return (
     <div className="h-screen bg-background flex flex-col">
@@ -1242,7 +1862,7 @@ const StudentPlayerPage = () => {
         </div>
       </header>
 
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 flex">
         <Sheet open={lessonDrawerOpen} onOpenChange={setLessonDrawerOpen}>
           <SheetContent
             side="left"
@@ -1284,7 +1904,7 @@ const StudentPlayerPage = () => {
                       const active = lesson.id === currentLesson.id;
                       const done = completedLessons.includes(lesson.id);
                       const lessonIndex = lessonIndexById[lesson.id] ?? 0;
-                      const blockedByGate = advancementLocked && lessonIndex > currentIndex;
+                      const blockedByGate = lessonIndex > maxUnlockedLessonIndex;
 
                       if (blockedByGate) {
                         return (
@@ -1349,6 +1969,20 @@ const StudentPlayerPage = () => {
                     <p className="mt-3 whitespace-pre-wrap leading-7 text-black">{lessonTheory}</p>
                   </article>
 
+                  {lessonObjectives.length > 0 && (
+                    <article className="rounded-lg border border-black/10 bg-white p-4">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-black/50">Objetivos</p>
+                      <ul className="mt-3 space-y-2">
+                        {lessonObjectives.map((objective, index) => (
+                          <li key={`${currentLesson.id}-objective-${index}`} className="flex items-start gap-2 text-sm text-black/85">
+                            <span className="mt-[7px] inline-block h-1.5 w-1.5 rounded-full bg-black/45" />
+                            <span>{objective}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                  )}
+
                   {instructionChecklist.length > 0 && (
                     <article className="rounded-lg border border-black/10 bg-white p-4">
                       <p className="text-[11px] uppercase tracking-[0.14em] text-black/50">Instruções</p>
@@ -1368,7 +2002,7 @@ const StudentPlayerPage = () => {
                   {lessonExamples.length > 0 && (
                     <article className="rounded-lg border border-black/10 bg-white p-4 space-y-3">
                       <p className="text-[11px] uppercase tracking-[0.14em] text-black/50">Exemplos</p>
-                      {lessonExamples.map((snippet, index) => (
+                      {lessonExamples.map((example, index) => (
                         <div key={`${currentLesson.id}-example-${index}`} className="space-y-2">
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-xs font-medium text-black/70">Exemplo {index + 1}</p>
@@ -1376,24 +2010,81 @@ const StudentPlayerPage = () => {
                               variant="ghost"
                               size="sm"
                               className="h-7 px-2 text-xs text-black/70 hover:bg-black/5 hover:text-black"
-                              onClick={() => void copyToClipboard(snippet, "Exemplo copiado.")}
+                              onClick={() => void copyToClipboard(example.code, "Exemplo copiado.")}
                             >
                               <Copy className="mr-1 h-3.5 w-3.5" />
                               Copiar
                             </Button>
                           </div>
-                          <pre className="overflow-x-auto rounded-md border border-black/15 bg-[#111111] p-3 text-xs leading-6 text-[#f3f3f3]">
-                            <code>{truncateCodeSnippet(snippet, 18)}</code>
-                          </pre>
+                          <CodeHighlightEditor
+                            language={example.language}
+                            value={truncateCodeSnippet(example.code, 18)}
+                            readOnly
+                            className="rounded-md border border-black/15 bg-[#111111]"
+                            minHeightClassName="min-h-[96px]"
+                          />
                         </div>
                       ))}
                     </article>
                   )}
 
-                  {lessonTip && (
-                    <aside className="rounded-lg border border-black/20 bg-[#fff2b2] px-4 py-3 text-sm text-black/85">
-                      <p className="font-semibold">Dica</p>
-                      <p className="mt-1">{lessonTip}</p>
+                  {lessonContentRules.length > 0 && isCodeLesson && (
+                    <article className="rounded-lg border border-black/10 bg-white p-4">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-black/50">Validação automática</p>
+                      <ul className="mt-3 space-y-2">
+                        {lessonContentRules.map((rule, index) => (
+                          <li key={`${currentLesson.id}-rule-${index}`} className="text-sm text-black/75">
+                            {rule.kind === "selector_exists"
+                              ? `Elemento obrigatório: ${rule.value}`
+                              : rule.kind === "text_includes"
+                                ? `Texto esperado: ${rule.value}`
+                                : rule.kind === "html_includes"
+                                  ? `HTML deve incluir: ${rule.value}`
+                                  : rule.kind === "css_includes"
+                                    ? `CSS deve incluir: ${rule.value}`
+                                    : `JS deve incluir: ${rule.value}`}
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                  )}
+
+                  {(lessonHints.length > 0 || lessonTip) && (
+                    <aside className="rounded-lg border border-black/20 bg-[#fff2b2] px-4 py-3 text-sm text-black/85 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold">Dicas</p>
+                        {currentLesson && lessonHints.length > currentHintRevealCount && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 border-black/20 bg-white/70 px-2 text-xs text-black hover:bg-white"
+                            onClick={() =>
+                              setHintRevealCountByLesson((prev) => ({
+                                ...prev,
+                                [currentLesson.id]: Math.min(
+                                  lessonHints.length,
+                                  (prev[currentLesson.id] || 0) + 1,
+                                ),
+                              }))
+                            }
+                          >
+                            Mostrar dica {Math.min(lessonHints.length, currentHintRevealCount + 1)}
+                          </Button>
+                        )}
+                      </div>
+
+                      {visibleHints.length > 0 ? (
+                        <ul className="space-y-1.5">
+                          {visibleHints.map((hint, index) => (
+                            <li key={`${currentLesson.id}-hint-${index}`} className="leading-6">{hint}</li>
+                          ))}
+                        </ul>
+                      ) : lessonTip ? (
+                        <p>{lessonTip}</p>
+                      ) : (
+                        <p className="text-black/70">Revela uma dica quando precisares.</p>
+                      )}
                     </aside>
                   )}
 
@@ -1429,40 +2120,41 @@ const StudentPlayerPage = () => {
                 <div className="h-12 px-2 md:px-3 border-b border-primary-foreground/20 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1">
                     <Button
-                      size="sm"
-                      variant={activePanel === "html" ? "default" : "ghost"}
-                      className={
-                        activePanel === "html"
-                          ? "h-8 bg-accent hover:bg-accent-hover text-accent-foreground"
-                          : "h-8 text-primary-foreground hover:bg-primary-foreground/10"
-                      }
-                      onClick={() => setActivePanel("html")}
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-primary-foreground hover:bg-primary-foreground/10"
+                      onClick={() => setFilesPanelOpen((prev) => !prev)}
+                      title={filesPanelOpen ? "Ocultar ficheiros" : "Mostrar ficheiros"}
                     >
-                      HTML
+                      {filesPanelOpen ? <FolderOpen className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
                     </Button>
                     <Button
                       size="sm"
-                      variant={activePanel === "css" ? "default" : "ghost"}
-                      className={
-                        activePanel === "css"
-                          ? "h-8 bg-accent hover:bg-accent-hover text-accent-foreground"
-                          : "h-8 text-primary-foreground hover:bg-primary-foreground/10"
-                      }
-                      onClick={() => setActivePanel("css")}
+                      variant="ghost"
+                      className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
+                      onClick={addWorkspaceFile}
                     >
-                      CSS
+                      <Plus className="h-4 w-4 mr-1" />
+                      Novo ficheiro
                     </Button>
                     <Button
                       size="sm"
-                      variant={activePanel === "js" ? "default" : "ghost"}
-                      className={
-                        activePanel === "js"
-                          ? "h-8 bg-accent hover:bg-accent-hover text-accent-foreground"
-                          : "h-8 text-primary-foreground hover:bg-primary-foreground/10"
-                      }
-                      onClick={() => setActivePanel("js")}
+                      variant="ghost"
+                      className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
+                      onClick={renameActiveFile}
+                      disabled={!activeFile}
                     >
-                      JS
+                      Renomear
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
+                      onClick={deleteActiveFile}
+                      disabled={!activeFile || currentWorkspaceFiles.length <= 1}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Eliminar
                     </Button>
                   </div>
                   {!isMobile && (
@@ -1478,22 +2170,130 @@ const StudentPlayerPage = () => {
                   )}
                 </div>
 
-                <div className="h-10 px-4 flex items-center border-b border-primary-foreground/15 text-primary-foreground/70 text-xs uppercase tracking-wide">
-                  <Code2 className="h-3.5 w-3.5 mr-2" />
-                  {activePanel === "html" ? "index.html" : activePanel === "css" ? "styles.css" : "script.js"}
-                </div>
+                {fileComposerOpen && (
+                  <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/55 p-4">
+                    <div className="w-full max-w-md rounded-lg border border-primary-foreground/20 bg-[#0b0c15] p-4 space-y-3">
+                      <p className="text-sm font-semibold text-primary-foreground">Novo ficheiro</p>
+                      <Input
+                        autoFocus
+                        value={newFileName}
+                        onChange={(event) => setNewFileName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            createWorkspaceFile();
+                          }
+                        }}
+                        placeholder="about.html"
+                        className="h-9 border-primary-foreground/25 bg-black/40 text-primary-foreground"
+                      />
+                      <p className="text-xs text-primary-foreground/65">
+                        Usa extensões como <code>.html</code>, <code>.css</code> ou <code>.js</code>.
+                      </p>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
+                          onClick={() => {
+                            setFileComposerOpen(false);
+                            setNewFileName("");
+                          }}
+                        >
+                          Cancelar
+                        </Button>
+                        <Button
+                          type="button"
+                          className="h-8 bg-accent hover:bg-accent-hover text-accent-foreground"
+                          onClick={createWorkspaceFile}
+                        >
+                          Criar ficheiro
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-                <CodeHighlightEditor
-                  key={activePanel}
-                  language={activePanel}
-                  value={currentCode[activePanel]}
-                  onChange={(nextCode) => updateCodePanel(activePanel, nextCode)}
-                  placeholder={activePanel === "html" ? "HTML" : activePanel === "css" ? "CSS" : "JavaScript"}
-                  className="flex-1 min-h-0 rounded-none border-0 bg-primary"
-                  minHeightClassName="h-full min-h-0"
-                  enableTabIndentation
-                  indentWith="  "
-                />
+                <div className="min-h-0 flex-1 flex overflow-hidden">
+                  {filesPanelOpen && (
+                    <aside className="w-52 shrink-0 border-r border-primary-foreground/20 bg-[#0a0a14]">
+                      <div className="h-10 px-3 border-b border-primary-foreground/15 flex items-center text-[11px] uppercase tracking-wide text-primary-foreground/60">
+                        ficheiros
+                      </div>
+                      <div className="p-2 space-y-1">
+                        {currentWorkspaceFiles.map((file) => (
+                          <div
+                            key={file.id}
+                            draggable
+                            onDragStart={() => setDraggingFileId(file.id)}
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={() => {
+                              if (!draggingFileId) return;
+                              moveWorkspaceFile(draggingFileId, file.id);
+                              setDraggingFileId(null);
+                            }}
+                            onDragEnd={() => setDraggingFileId(null)}
+                            className={`group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors ${
+                              activeFile?.id === file.id
+                                ? "bg-primary-foreground/15 text-primary-foreground"
+                                : "text-primary-foreground/75 hover:bg-primary-foreground/10"
+                            }`}
+                          >
+                            <GripVertical className="h-3.5 w-3.5 shrink-0 text-primary-foreground/45" />
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 truncate text-left"
+                              onClick={() =>
+                                setActiveFileByLesson((prev) => ({
+                                  ...prev,
+                                  [currentLesson.id]: file.id,
+                                }))
+                              }
+                            >
+                              {file.name}
+                            </button>
+                            {file.language === "html" && (
+                              <button
+                                type="button"
+                                className={`shrink-0 rounded px-1 py-0.5 text-[10px] uppercase tracking-wide border ${
+                                  entryHtmlFileByLesson[currentLesson.id] === file.id
+                                    ? "border-accent bg-accent text-accent-foreground"
+                                    : "border-primary-foreground/25 text-primary-foreground/70 hover:border-primary-foreground/45"
+                                }`}
+                                onClick={() => markAsEntryHtml(file.id)}
+                                title="Usar como ficheiro principal de HTML"
+                              >
+                                Entry
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        {currentWorkspaceFiles.length === 0 && (
+                          <p className="px-2 py-1 text-xs text-primary-foreground/60">Sem ficheiros ainda.</p>
+                        )}
+                      </div>
+                    </aside>
+                  )}
+
+                  <div className="min-w-0 flex-1 flex flex-col">
+                    <div className="h-10 px-4 flex items-center border-b border-primary-foreground/15 text-primary-foreground/70 text-xs uppercase tracking-wide">
+                      <Code2 className="h-3.5 w-3.5 mr-2" />
+                      {activeFile?.name || "sem ficheiro"}
+                    </div>
+
+                    <CodeHighlightEditor
+                      key={activeFile?.id || "no-file"}
+                      language={activeFile?.language || "html"}
+                      value={activeFile?.content || ""}
+                      onChange={updateActiveFileContent}
+                      placeholder={activeFile?.name || "Sem ficheiro selecionado"}
+                      className="flex-1 min-h-0 rounded-none border-0 bg-primary"
+                      minHeightClassName="h-full min-h-0"
+                      enableTabIndentation
+                      indentWith="  "
+                    />
+                  </div>
+                </div>
                 <div className="border-t border-primary-foreground/20 bg-[#0a0a14] px-3 py-2">
                   <div className="inline-flex items-center gap-1 rounded-md border border-primary-foreground/20 bg-black/30 p-1">
                     <Button
@@ -1708,6 +2508,7 @@ const StudentPlayerPage = () => {
                       {(currentQuizState?.currentQuestionIndex || 0) < orderedQuizQuestions.length - 1 ? (
                         <Button
                           className="bg-[#ffffff] hover:bg-[#e8e8e8] text-[#000000]"
+                          disabled={!currentQuizQuestionAnswered}
                           onClick={goToNextQuizQuestion}
                         >
                           Seguinte
@@ -1716,6 +2517,7 @@ const StudentPlayerPage = () => {
                       ) : (
                         <Button
                           className="bg-[#ffffff] hover:bg-[#e8e8e8] text-[#000000]"
+                          disabled={quizHasUnanswered}
                           onClick={submitQuiz}
                         >
                           Submeter Questionário
@@ -1770,7 +2572,7 @@ const StudentPlayerPage = () => {
                 }`}
               >
                 <div className="h-12 px-4 border-b border-border flex items-center justify-between">
-                  <p className="text-sm font-medium text-foreground">Pré-visualização</p>
+                  <p className="text-sm font-medium text-foreground">{isVideoLesson ? "Vídeo da lição" : "Pré-visualização"}</p>
                   <div className="flex items-center gap-2">
                     {isCodeLesson && (
                       <>
@@ -1952,7 +2754,7 @@ const StudentPlayerPage = () => {
 
         <div>
           {nextLesson ? (
-            advancementLocked ? (
+            advancementLocked || nextLessonBlocked ? (
               <Button disabled className="font-body text-sm">
                 Seguinte
                 <ChevronRight className="h-4 w-4 ml-1" />
@@ -1965,7 +2767,7 @@ const StudentPlayerPage = () => {
                 </Button>
               </Link>
             )
-          ) : advancementLocked ? (
+          ) : advancementLocked || currentIndex < maxUnlockedLessonIndex ? (
             <Button disabled className="font-body text-sm">Terminar Curso</Button>
           ) : (
             <Link to={`/course/${course.id}`}>

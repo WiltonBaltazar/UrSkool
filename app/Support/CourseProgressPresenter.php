@@ -5,22 +5,28 @@ namespace App\Support;
 use App\Models\Course;
 use App\Models\LessonProgress;
 use App\Models\User;
+use Illuminate\Support\Collection;
 
 class CourseProgressPresenter
 {
     public static function summarize(User $user, Course $course): array
+    {
+        $progressByLessonId = LessonProgress::query()
+            ->where('user_id', $user->id)
+            ->where('course_id', $course->id)
+            ->get()
+            ->keyBy('lesson_id');
+
+        return self::summarizeWithProgressByLessonId($course, $progressByLessonId);
+    }
+
+    public static function summarizeWithProgressByLessonId(Course $course, Collection $progressByLessonId): array
     {
         $course->loadMissing('sections.lessons');
 
         $lessonIds = $course->sections
             ->flatMap(fn ($section) => $section->lessons->pluck('id'))
             ->values();
-
-        $progressByLessonId = LessonProgress::query()
-            ->where('user_id', $user->id)
-            ->where('course_id', $course->id)
-            ->get()
-            ->keyBy('lesson_id');
 
         $completedLessonIds = [];
         $lessonEntries = [];

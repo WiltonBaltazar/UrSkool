@@ -96,12 +96,12 @@ class StudentProgressController extends Controller
             return true;
         }
 
-        if (! $user || ! $user->email) {
+        if (! $user || ! $user->id) {
             return false;
         }
 
         return $course->enrollments()
-            ->where('email', $user->email)
+            ->where('user_id', $user->id)
             ->where('status', 'completed')
             ->exists();
     }

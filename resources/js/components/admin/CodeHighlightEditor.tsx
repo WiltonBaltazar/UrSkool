@@ -6,7 +6,8 @@ type EditorLanguage = "html" | "css" | "js" | "javascript";
 interface CodeHighlightEditorProps {
   language: EditorLanguage;
   value: string;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
+  readOnly?: boolean;
   placeholder?: string;
   className?: string;
   minHeightClassName?: string;
@@ -143,6 +144,7 @@ const CodeHighlightEditor = ({
   language,
   value,
   onChange,
+  readOnly = false,
   placeholder,
   className,
   minHeightClassName = "min-h-[170px]",
@@ -164,6 +166,7 @@ const CodeHighlightEditor = ({
   }, [language, value]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly) return;
     if (!enableTabIndentation || event.key !== "Tab") return;
 
     event.preventDefault();
@@ -174,7 +177,7 @@ const CodeHighlightEditor = ({
     if (!event.shiftKey) {
       if (start === end) {
         const nextValue = `${value.slice(0, start)}${indentWith}${value.slice(end)}`;
-        onChange(nextValue);
+        onChange?.(nextValue);
         const nextCursor = start + indentWith.length;
         window.requestAnimationFrame(() => {
           target.selectionStart = nextCursor;
@@ -191,7 +194,7 @@ const CodeHighlightEditor = ({
       const indented = lines.map((line) => `${indentWith}${line}`).join("\n");
       const nextValue = `${value.slice(0, blockStart)}${indented}${value.slice(safeBlockEnd)}`;
 
-      onChange(nextValue);
+      onChange?.(nextValue);
       const nextStart = start + indentWith.length;
       const nextEnd = end + indentWith.length * lines.length;
       window.requestAnimationFrame(() => {
@@ -232,7 +235,7 @@ const CodeHighlightEditor = ({
       .join("\n");
 
     const nextValue = `${value.slice(0, blockStart)}${dedented}${value.slice(safeBlockEnd)}`;
-    onChange(nextValue);
+    onChange?.(nextValue);
 
     const nextStart = Math.max(blockStart, start - removedFromStartLine);
     const nextEnd = Math.max(nextStart, end - removedTotal);
@@ -253,27 +256,29 @@ const CodeHighlightEditor = ({
         )}
         style={{ tabSize: 2 }}
         dangerouslySetInnerHTML={{
-          __html: highlighted || `<span style=\"color:#64748b;\">${escapeHtml(placeholder || "")}</span>\n`,
+          __html: highlighted || `<span style="color:#64748b;">${escapeHtml(placeholder || "")}</span>\n`,
         }}
       />
-      <textarea
-        ref={textareaRef}
-        value={value}
-        spellCheck={false}
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={handleKeyDown}
-        onScroll={(event) => {
-          if (!preRef.current) return;
-          preRef.current.scrollTop = event.currentTarget.scrollTop;
-          preRef.current.scrollLeft = event.currentTarget.scrollLeft;
-        }}
-        className={cn(
-          "absolute inset-0 w-full resize-none overflow-auto bg-transparent p-3 font-mono text-xs leading-6",
-          "text-transparent caret-slate-100 outline-none selection:bg-slate-300/30",
-          minHeightClassName,
-        )}
-        style={{ tabSize: 2 }}
-      />
+      {!readOnly && (
+        <textarea
+          ref={textareaRef}
+          value={value}
+          spellCheck={false}
+          onChange={(event) => onChange?.(event.target.value)}
+          onKeyDown={handleKeyDown}
+          onScroll={(event) => {
+            if (!preRef.current) return;
+            preRef.current.scrollTop = event.currentTarget.scrollTop;
+            preRef.current.scrollLeft = event.currentTarget.scrollLeft;
+          }}
+          className={cn(
+            "absolute inset-0 w-full resize-none overflow-auto bg-transparent p-3 font-mono text-xs leading-6",
+            "text-transparent caret-slate-100 outline-none selection:bg-slate-300/30",
+            minHeightClassName,
+          )}
+          style={{ tabSize: 2 }}
+        />
+      )}
     </div>
   );
 };

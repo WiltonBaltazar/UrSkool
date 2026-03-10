@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/auth')->group(function (): void {
     Route::get('/user', [SessionController::class, 'user']);
+    Route::get('/signup-availability', [SessionController::class, 'signupAvailability']);
+    Route::post('/register', [SessionController::class, 'register'])->middleware('throttle:10,1');
     Route::post('/login', [SessionController::class, 'store'])->middleware('throttle:10,1');
     Route::post('/refresh', [SessionController::class, 'refresh'])->middleware('throttle:30,1');
     Route::post('/logout', [SessionController::class, 'destroy'])->middleware('throttle:30,1');
@@ -24,6 +26,7 @@ Route::prefix('api')->group(function (): void {
 
 Route::middleware('auth:sanctum')->prefix('api')->group(function (): void {
     Route::get('/courses/{course}/access', [CourseController::class, 'access']);
+    Route::get('/student/courses', [CourseController::class, 'studentIndex']);
     Route::get('/student/courses/{course}', [CourseController::class, 'studentShow']);
     Route::put('/student/courses/{course}/lessons/{lesson}/progress', [StudentProgressController::class, 'upsert']);
 });

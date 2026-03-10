@@ -5,6 +5,13 @@ export interface QuizQuestion {
   correctOptionIndex: number;
 }
 
+export interface LessonWorkspaceFile {
+  id: string;
+  name: string;
+  language: "html" | "css" | "js";
+  content: string;
+}
+
 export interface Lesson {
   id: string;
   title: string;
@@ -17,6 +24,8 @@ export interface Lesson {
   htmlCode?: string | null;
   cssCode?: string | null;
   jsCode?: string | null;
+  workspaceFiles?: LessonWorkspaceFile[] | null;
+  entryHtmlFileId?: string | null;
   quizQuestions?: QuizQuestion[] | null;
   quizPassPercentage?: number | null;
   quizRandomizeQuestions?: boolean | null;
@@ -48,6 +57,8 @@ export interface Course {
   description: string;
   hasAccess?: boolean;
   progress?: CourseProgress;
+  resumeLessonId?: string | null;
+  enrolledAt?: string | null;
 }
 
 export interface EnrollmentPayload {
@@ -122,6 +133,8 @@ export interface CoursePayload {
       htmlCode?: string;
       cssCode?: string;
       jsCode?: string;
+      workspaceFiles?: LessonWorkspaceFile[];
+      entryHtmlFileId?: string;
       quizQuestions?: QuizQuestion[];
       quizPassPercentage?: number;
       quizRandomizeQuestions?: boolean;
@@ -198,5 +211,27 @@ export interface AdminDashboardData {
   users: AdminUserSummary[];
   enrollments: AdminEnrollmentSummary[];
   categories: AdminCategoryBreakdown[];
+  coursePerformance: AdminCoursePerformance[];
+  studentPerformance: AdminStudentPerformance[];
   settings: AdminSettings;
+}
+
+export interface AdminCoursePerformance {
+  courseId: string;
+  courseTitle: string;
+  enrollments: number;
+  activeStudents: number;
+  completionRate: number;
+  averageQuizScore: number;
+  quizPassRate: number;
+}
+
+export interface AdminStudentPerformance {
+  userId: string;
+  name: string;
+  email: string;
+  enrolledCourses: number;
+  completionRate: number;
+  averageQuizScore: number;
+  lastActivityAt?: string | null;
 }

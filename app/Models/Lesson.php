@@ -3,9 +3,9 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Model;
 
 class Lesson extends Model
 {
@@ -24,6 +24,8 @@ class Lesson extends Model
         'html_code',
         'css_code',
         'js_code',
+        'workspace_files',
+        'entry_html_file_id',
         'quiz_questions',
         'quiz_pass_percentage',
         'quiz_randomize_questions',
@@ -34,6 +36,7 @@ class Lesson extends Model
         'is_free' => 'boolean',
         'sort_order' => 'integer',
         'quiz_questions' => 'array',
+        'workspace_files' => 'array',
         'quiz_pass_percentage' => 'integer',
         'quiz_randomize_questions' => 'boolean',
     ];
