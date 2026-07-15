@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Admin\SettingController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\CourseController;
 use App\Http\Controllers\Api\EnrollmentController;
+use App\Http\Controllers\Api\StudentCertificateController;
 use App\Http\Controllers\Api\StudentProgressController;
 use App\Http\Controllers\Auth\SessionController;
 use Illuminate\Support\Facades\Route;
@@ -22,6 +23,7 @@ Route::prefix('api/auth')->group(function (): void {
 
 Route::prefix('api')->group(function (): void {
     Route::post('/checkout', [EnrollmentController::class, 'store'])->middleware('throttle:15,1');
+    Route::get('/certificates/{shareCode}', [StudentCertificateController::class, 'showPublic']);
 });
 
 Route::middleware('auth:sanctum')->prefix('api')->group(function (): void {
@@ -29,6 +31,7 @@ Route::middleware('auth:sanctum')->prefix('api')->group(function (): void {
     Route::get('/student/courses', [CourseController::class, 'studentIndex']);
     Route::get('/student/courses/{course}', [CourseController::class, 'studentShow']);
     Route::put('/student/courses/{course}/lessons/{lesson}/progress', [StudentProgressController::class, 'upsert']);
+    Route::get('/student/courses/{course}/certificate', [StudentCertificateController::class, 'issueOrShow']);
 });
 
 Route::middleware(['auth:sanctum', 'admin'])->prefix('api/admin')->group(function (): void {

@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Award,
   BookOpen,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Circle,
   FileCode2,
@@ -20,7 +23,7 @@ import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { fetchAuthUser, fetchCourse, fetchCourseAccess } from "@/lib/api";
+import { fetchAuthUser, fetchCourse, fetchCourseAccess, fetchCourseCertificate } from "@/lib/api";
 import { formatMzn, toLevelPt } from "@/lib/labels";
 import type { Lesson, LessonProgressEntry } from "@/lib/types";
 import { addToCart } from "@/lib/cart";
@@ -55,6 +58,14 @@ const isInteractive = (lesson: Lesson) => {
   );
 };
 
+const isCodePracticeLesson = (lesson: Lesson) => {
+  if (lesson.type === "quiz" || lesson.type === "text" || lesson.type === "video") {
+    return false;
+  }
+
+  return isInteractive(lesson);
+};
+
 const CoursePage = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -72,6 +83,26 @@ const CoursePage = () => {
     queryKey: ["course-access", id, user?.id],
     queryFn: () => fetchCourseAccess(id || "1"),
     enabled: Boolean(id && user && course && course.price > 0 && !course.hasAccess),
+  });
+  const [collapsedSectionIds, setCollapsedSectionIds] = useState<Record<string, boolean>>({});
+  const openCertificate = useMutation({
+    mutationFn: async () => {
+      if (!id) {
+        throw new Error("Curso inválido para gerar certificado.");
+      }
+
+      return fetchCourseCertificate(id);
+    },
+    onSuccess: (certificate) => {
+      navigate(`/certificate/${certificate.shareCode}`);
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Certificado indisponível",
+        description: error instanceof Error ? error.message : "Não foi possível gerar o certificado agora.",
+      });
+    },
   });
 
   if (isLoading) {
@@ -109,12 +140,40 @@ const CoursePage = () => {
     },
     {},
   );
+  const lessonIndexById = allLessons.reduce<Record<string, number>>((acc, lesson, index) => {
+    acc[lesson.id] = index;
+    return acc;
+  }, {});
+  const isGateLessonUnlocked = (lesson: Lesson) => {
+    const progressEntry = lessonProgressById[lesson.id];
+
+    if (lesson.type === "quiz") {
+      return Boolean(progressEntry?.quizPassed || progressEntry?.status === "completed");
+    }
+
+    if (isCodePracticeLesson(lesson)) {
+      return Boolean(progressEntry?.codeIsCorrect || progressEntry?.status === "completed");
+    }
+
+    return true;
+  };
+  const firstLockedGateIndex = allLessons.findIndex((lesson) => {
+    if (lesson.type !== "quiz" && !isCodePracticeLesson(lesson)) {
+      return false;
+    }
+
+    return !isGateLessonUnlocked(lesson);
+  });
+  const maxUnlockedLessonIndex = firstLockedGateIndex === -1
+    ? Math.max(0, allLessons.length - 1)
+    : firstLockedGateIndex;
   const progressTotalLessons = courseProgress?.totalLessons ?? allLessons.length;
   const progressCompletedLessons = courseProgress?.completedLessons
     ?? allLessons.filter((lesson) => lessonProgressById[lesson.id]?.status === "completed").length;
   const completionPercent = progressTotalLessons > 0
     ? Math.round((progressCompletedLessons / progressTotalLessons) * 100)
     : 0;
+  const courseIsCompleted = progressTotalLessons > 0 && progressCompletedLessons >= progressTotalLessons;
   const resumeLesson = allLessons.find((lesson) => lessonProgressById[lesson.id]?.status !== "completed") || startLesson;
   const isAwaitingAccess = course.price > 0 && Boolean(user) && isCheckingAccess;
   const canPurchase = course.price > 0 && !hasAccess && !isAwaitingAccess;
@@ -135,6 +194,17 @@ const CoursePage = () => {
         : `${course.title} foi adicionado ao carrinho.`,
     });
     navigate("/cart");
+  };
+  const collapseAllModules = () => {
+    setCollapsedSectionIds(
+      Object.fromEntries(course.sections.map((section) => [section.id, true])),
+    );
+  };
+
+  const expandAllModules = () => {
+    setCollapsedSectionIds(
+      Object.fromEntries(course.sections.map((section) => [section.id, false])),
+    );
   };
 
   if (hasAccess) {
@@ -159,6 +229,17 @@ const CoursePage = () => {
                   {firstInteractiveLesson && (
                     <Button asChild variant="outline" className="h-11 px-7 rounded-md">
                       <Link to={`/student/${course.id}/${firstInteractiveLesson.id}`}>Iniciar sessão prática</Link>
+                    </Button>
+                  )}
+                  {courseIsCompleted && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 px-7 rounded-md"
+                      disabled={openCertificate.isPending}
+                      onClick={() => openCertificate.mutate()}
+                    >
+                      {openCertificate.isPending ? "A gerar certificado..." : "Ver certificado"}
                     </Button>
                   )}
                 </div>
@@ -206,35 +287,91 @@ const CoursePage = () => {
           </Card>
 
           <div className="space-y-4">
-            <h2 className="font-display text-3xl">Syllabus</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-display text-3xl">Syllabus</h2>
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="sm" className="text-xs" onClick={expandAllModules}>
+                  Expandir tudo
+                </Button>
+                <Button type="button" variant="outline" size="sm" className="text-xs" onClick={collapseAllModules}>
+                  Recolher tudo
+                </Button>
+              </div>
+            </div>
             {course.sections.map((section) => {
               const completedInSection = section.lessons.filter(
                 (lesson) => lessonProgressById[lesson.id]?.status === "completed",
               ).length;
-              const sectionResumeLesson = section.lessons.find(
-                (lesson) => lessonProgressById[lesson.id]?.status !== "completed",
-              ) || section.lessons[0];
+              const isCollapsed = Boolean(collapsedSectionIds[section.id]);
 
               return (
                 <Card key={section.id} className="border-border">
                   <CardHeader className="pb-4">
-                    <CardTitle className="font-display text-2xl">{section.title}</CardTitle>
-                    <CardDescription>
-                      {completedInSection}/{section.lessons.length} lições concluídas
-                    </CardDescription>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <CardTitle className="font-display text-2xl">{section.title}</CardTitle>
+                        <CardDescription>
+                          {completedInSection}/{section.lessons.length} lições concluídas
+                        </CardDescription>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-xs"
+                        onClick={() =>
+                          setCollapsedSectionIds((prev) => ({
+                            ...prev,
+                            [section.id]: !prev[section.id],
+                          }))
+                        }
+                      >
+                        {isCollapsed ? (
+                          <ChevronRight className="mr-1 h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="mr-1 h-4 w-4" />
+                        )}
+                        {isCollapsed ? "Expandir" : "Recolher"}
+                      </Button>
+                    </div>
                   </CardHeader>
-                  <CardContent className="space-y-3">
+                  {!isCollapsed && (
+                    <CardContent className="space-y-3">
                     {section.lessons.map((lesson) => {
                       const meta = getLessonMeta(lesson);
                       const LessonIcon = meta.icon;
                       const progressEntry = lessonProgressById[lesson.id];
                       const isCompleted = progressEntry?.status === "completed";
                       const quizScore = lesson.type === "quiz" ? progressEntry?.quizScore : null;
+                      const lessonIndex = lessonIndexById[lesson.id] ?? 0;
+                      const isLockedByGate = lessonIndex > maxUnlockedLessonIndex;
+                      const rowClasses = "grid grid-cols-[26px_120px_1fr_auto] items-center gap-3 rounded-md border border-border px-3 py-2";
+
+                      if (isLockedByGate) {
+                        return (
+                          <div
+                            key={lesson.id}
+                            className={`${rowClasses} bg-muted/30 text-muted-foreground`}
+                            aria-disabled="true"
+                          >
+                            <Lock className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm font-medium">{meta.label}</span>
+                            <span className="text-sm">{lesson.title}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-border">
+                                <Lock className="h-3 w-3" />
+                                Bloqueado
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
 
                       return (
-                        <div
+                        <Link
                           key={lesson.id}
-                          className="grid grid-cols-[26px_120px_1fr_auto] items-center gap-3 rounded-md border border-border bg-background px-3 py-2"
+                          to={`/student/${course.id}/${lesson.id}`}
+                          className={`${rowClasses} bg-background transition-colors hover:bg-accent-soft/60`}
                         >
                           {isCompleted ? (
                             <CheckCircle2 className="h-4 w-4 text-success" />
@@ -249,21 +386,23 @@ const CoursePage = () => {
                             )}
                             <LessonIcon className="h-4 w-4 text-accent" />
                           </div>
-                        </div>
+                        </Link>
                       );
                     })}
 
-                    {sectionResumeLesson && (
-                      <div className="pt-2">
-                        <Button asChild className="bg-accent hover:bg-accent-hover text-accent-foreground rounded-md">
-                          <Link to={`/student/${course.id}/${sectionResumeLesson.id}`}>Retomar módulo</Link>
-                        </Button>
-                      </div>
-                    )}
-                  </CardContent>
+                    </CardContent>
+                  )}
                 </Card>
               );
             })}
+
+            {resumeLesson && (
+              <div className="pt-2">
+                <Button asChild className="bg-accent hover:bg-accent-hover text-accent-foreground rounded-md">
+                  <Link to={`/student/${course.id}/${resumeLesson.id}`}>Retomar módulo</Link>
+                </Button>
+              </div>
+            )}
           </div>
         </section>
       </div>
@@ -428,33 +567,60 @@ const CoursePage = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
-            {course.sections.map((section) => (
-              <div key={section.id} className="rounded-lg border border-border overflow-hidden">
-                <div className="bg-surface-sunken px-4 py-3">
-                  <h3 className="font-display text-xl">{section.title}</h3>
-                </div>
-                <div className="divide-y divide-border">
-                  {section.lessons.map((lesson) => {
-                    const meta = getLessonMeta(lesson);
-                    const LessonIcon = meta.icon;
+            <div className="flex items-center justify-end gap-2">
+              <Button type="button" variant="outline" size="sm" className="text-xs" onClick={expandAllModules}>
+                Expandir tudo
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="text-xs" onClick={collapseAllModules}>
+                Recolher tudo
+              </Button>
+            </div>
+            {course.sections.map((section) => {
+              const isCollapsed = Boolean(collapsedSectionIds[section.id]);
 
-                    return (
-                      <div key={lesson.id} className="grid grid-cols-[24px_120px_1fr_auto] gap-4 items-center px-4 py-3 text-sm">
-                        <LessonIcon className="h-4 w-4 text-accent" />
-                        <span className="font-medium text-foreground">{meta.label}</span>
-                        <span className="text-muted-foreground">{lesson.title}</span>
-                        {!lesson.isFree && (
-                          <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-border">
-                            <Lock className="h-3 w-3" />
-                            Bloqueado
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
+              return (
+                <div key={section.id} className="rounded-lg border border-border overflow-hidden">
+                  <div className="bg-surface-sunken px-4 py-3 flex items-center justify-between gap-3">
+                    <h3 className="font-display text-xl">{section.title}</h3>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={() =>
+                        setCollapsedSectionIds((prev) => ({
+                          ...prev,
+                          [section.id]: !prev[section.id],
+                        }))
+                      }
+                    >
+                      {isCollapsed ? (
+                        <ChevronRight className="mr-1 h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="mr-1 h-4 w-4" />
+                      )}
+                      {isCollapsed ? "Expandir" : "Recolher"}
+                    </Button>
+                  </div>
+                  {!isCollapsed && (
+                    <div className="divide-y divide-border">
+                      {section.lessons.map((lesson) => {
+                        const meta = getLessonMeta(lesson);
+                        const LessonIcon = meta.icon;
+
+                        return (
+                          <div key={lesson.id} className="grid grid-cols-[24px_120px_1fr] gap-4 items-center px-4 py-3 text-sm">
+                            <LessonIcon className="h-4 w-4 text-accent" />
+                            <span className="font-medium text-foreground">{meta.label}</span>
+                            <span className="text-muted-foreground">{lesson.title}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
 
