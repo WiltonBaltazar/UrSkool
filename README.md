@@ -68,11 +68,14 @@ cp .env.example .env
 php artisan key:generate
 ```
 
-3. Initialize database:
+3. Initialize database (SQLite by default):
 
 ```bash
+touch database/database.sqlite
 php artisan migrate:fresh --seed
 ```
+
+This seeds 4 courses (20 sections, 54 lessons — including interactive code-practice lessons with server-side validation rules), app settings, and the accounts below.
 
 4. Run app:
 
@@ -81,11 +84,15 @@ php artisan serve
 npm run dev
 ```
 
-## Seeded Admin User
+## Seeded Accounts
 
-- Email: `admin@urskool.test`
-- Password: `Admin@12345`
-- Login URL: [http://localhost:8080/login](http://localhost:8080/login)
+| Role | Email | Password |
+|---|---|---|
+| Admin | `admin@urskool.test` | `Admin@12345` |
+| Student | `student1@urskool.test` | `Student@123` |
+| Student | `student2@urskool.test` | `Student@123` |
+
+Login URL: [http://localhost:8080/login](http://localhost:8080/login)
 
 ## Useful Commands
 
