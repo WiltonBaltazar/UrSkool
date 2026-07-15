@@ -16,6 +16,10 @@ class AppSettingSeeder extends Seeder
             'maintenance_mode' => 'false',
             'allow_self_signup' => 'true',
             'default_course_visibility' => 'public',
+            'certificate_school_name' => 'UrSkool',
+            'certificate_issuer_title' => 'Diretor Executivo',
+            'certificate_issuer_name' => 'Direção Académica',
+            'certificate_signature_url' => '',
         ];
 
         foreach ($defaults as $key => $value) {
