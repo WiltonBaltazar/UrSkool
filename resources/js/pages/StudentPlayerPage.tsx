@@ -2,35 +2,35 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Circle,
-  Code2,
+  ChevronUp,
   Copy,
   Folder,
-  FolderOpen,
   GripVertical,
   ExternalLink,
   Maximize2,
   Menu,
   Minimize2,
   Plus,
+  Pencil,
   Play,
   PlayCircle,
   RefreshCw,
   RotateCcw,
   Trash2,
-  Trophy,
   Undo2,
   XCircle,
 } from "lucide-react";
 import CodeHighlightEditor from "@/components/admin/CodeHighlightEditor";
+import { LessonSidebar } from "@/components/player/LessonSidebar";
+import { QuizSection } from "@/components/player/QuizSection";
+import { TextMediaSection } from "@/components/player/TextMediaSection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { fetchStudentCourse, saveLessonProgress } from "@/lib/api";
@@ -92,6 +92,7 @@ const isCodePracticeLesson = (lesson: Lesson): boolean => {
 
   return (
     lesson.type === "code"
+    || lesson.type === "project"
     || Boolean(lesson.htmlCode || lesson.cssCode || lesson.jsCode)
     || ["html", "css", "javascript", "js"].includes(language)
   );
@@ -116,6 +117,10 @@ const defaultInstructions = (lesson: Lesson) => {
 
   if (lesson.type === "video") {
     return lesson.content || "Assiste ao vídeo e toma notas dos pontos principais antes de avançar.";
+  }
+
+  if (lesson.type === "project") {
+    return lesson.content || `Projecto: "${lesson.title}". Aplica tudo o que aprendeste para construir este projecto completo.`;
   }
 
   return (
@@ -199,6 +204,19 @@ interface LessonExampleSnippet {
   language: "html" | "css" | "js";
 }
 
+interface LessonHintTextSegment {
+  kind: "text";
+  value: string;
+}
+
+interface LessonHintCodeSegment {
+  kind: "code";
+  value: string;
+  language: LessonExampleSnippet["language"];
+}
+
+type LessonHintSegment = LessonHintTextSegment | LessonHintCodeSegment;
+
 type CodeValidationRuleKind =
   | "html_includes"
   | "css_includes"
@@ -252,6 +270,59 @@ const inferExampleLanguage = (snippet: string): LessonExampleSnippet["language"]
 
   return "html";
 };
+
+const parseHintSegments = (value: string): LessonHintSegment[] => {
+  const source = decodeHtmlEntities(value || "").replace(/\r/g, "");
+  if (!source.trim()) return [];
+
+  const segments: LessonHintSegment[] = [];
+  const fencedRegex = /```([a-z0-9_-]+)?\n([\s\S]*?)```/gi;
+  let lastIndex = 0;
+  let match = fencedRegex.exec(source);
+
+  while (match) {
+    const before = source.slice(lastIndex, match.index).trim();
+    if (before) {
+      segments.push({ kind: "text", value: before });
+    }
+
+    const code = (match[2] || "").trim();
+    if (code) {
+      const language = match[1] ? normalizeExampleLanguage(match[1]) : inferExampleLanguage(code);
+      segments.push({ kind: "code", value: code, language });
+    }
+
+    lastIndex = match.index + match[0].length;
+    match = fencedRegex.exec(source);
+  }
+
+  const trailing = source.slice(lastIndex).trim();
+  if (trailing) {
+    segments.push({ kind: "text", value: trailing });
+  }
+
+  if (segments.length > 0) {
+    return segments;
+  }
+
+  return [{ kind: "text", value: source.trim() }];
+};
+
+const renderInlineHintText = (value: string) =>
+  value
+    .split(/(`[^`\n]+`)/g)
+    .filter((part) => part.length > 0)
+    .map((part, index) => {
+      if (/^`[^`\n]+`$/.test(part)) {
+        return (
+          <code key={`hint-inline-code-${index}`} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.95em]">
+            {part.slice(1, -1)}
+          </code>
+        );
+      }
+
+      return <span key={`hint-inline-text-${index}`}>{part}</span>;
+    });
 
 const stripCodeBlocksForTheory = (value: string): string =>
   value
@@ -502,6 +573,21 @@ const resolveLessonCode = (lesson: Lesson): LessonCodeState => {
 };
 
 const resolveWorkspaceFiles = (lesson: Lesson): WorkspaceFile[] => {
+  const persisted = Array.isArray(lesson.workspaceFiles)
+    ? lesson.workspaceFiles
+      .map((file) => ({
+        id: (file.id || "").trim(),
+        name: (file.name || "").trim(),
+        language: file.language,
+        content: file.content || "",
+      }))
+      .filter((file) => file.id && file.name && ["html", "css", "js"].includes(file.language))
+    : [];
+
+  if (persisted.length > 0) {
+    return persisted;
+  }
+
   const baseline = resolveLessonCode(lesson);
 
   return [
@@ -547,29 +633,44 @@ const languageFromFileName = (name: string): WorkspaceFile["language"] => {
   return "html";
 };
 
-const buildPreviewDoc = (code: LessonCodeState) => {
-  const escapedJsLiteral = JSON.stringify(code.js).replace(/<\/script/gi, "<\\/script");
+const buildPreviewDoc = (files: WorkspaceFile[], entryHtmlFileId?: string) => {
+  const normalizedFiles = files.map((file) => ({
+    name: file.name,
+    language: file.language,
+    content: file.content,
+  }));
+  const entryHtmlFile = files.find((file) => file.id === entryHtmlFileId && file.language === "html")
+    || files.find((file) => file.name.toLowerCase() === "index.html" && file.language === "html")
+    || files.find((file) => file.language === "html");
+  const entryPath = (entryHtmlFile?.name || "index.html").replace(/^\/+/, "");
+  const scriptTerminatorSafe = "<" + String.fromCharCode(92) + "/script";
+  const escapedFilesLiteral = JSON.stringify(normalizedFiles).replace(new RegExp("</script", "gi"), scriptTerminatorSafe);
+  const escapedEntryPath = JSON.stringify(entryPath).replace(new RegExp("</script", "gi"), scriptTerminatorSafe);
 
   return `<!doctype html>
 <html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <style>${code.css}</style>
   </head>
   <body>
-    ${code.html}
+    <div id="__urskool_preview_root"></div>
+    <pre id="__urskool_console__" style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;font-size:12px;white-space:pre-wrap;"></pre>
     <script>
       (function () {
-        var logBox = document.createElement("pre");
-        logBox.style.borderTop = "1px solid #e5e7eb";
-        logBox.style.marginTop = "16px";
-        logBox.style.paddingTop = "10px";
-        logBox.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, monospace";
-        logBox.style.fontSize = "12px";
-        logBox.style.whiteSpace = "pre-wrap";
-        logBox.id = "__urskool_console__";
-        document.body.appendChild(logBox);
+        var workspaceFiles = ${escapedFilesLiteral};
+        var initialPath = ${escapedEntryPath};
+        var parser = new DOMParser();
+        var root = document.getElementById("__urskool_preview_root");
+        var logBox = document.getElementById("__urskool_console__");
+        var styleTag = document.createElement("style");
+        styleTag.id = "__urskool_dynamic_styles";
+        document.head.appendChild(styleTag);
+
+        var normalizePath = function (value) {
+          var cleaned = (value || "index.html").replace(/^[/]+/, "").trim();
+          return cleaned || "index.html";
+        };
 
         var appendLog = function (type, values) {
           var line = "[" + type.toUpperCase() + "] " + values.map(function (v) {
@@ -585,16 +686,206 @@ const buildPreviewDoc = (code: LessonCodeState) => {
         console.warn = function () { var args = Array.prototype.slice.call(arguments); appendLog("warn", args); originalWarn.apply(console, args); };
         console.error = function () { var args = Array.prototype.slice.call(arguments); appendLog("error", args); originalError.apply(console, args); };
 
+        var nativeReplaceState = window.history.replaceState.bind(window.history);
+        var nativePushState = window.history.pushState.bind(window.history);
+        window.history.replaceState = function (state, title, url) {
+          try {
+            if (typeof url === "string") {
+              return nativeReplaceState(state, title);
+            }
+            return nativeReplaceState.apply(window.history, arguments);
+          } catch (_error) {
+            appendLog("warn", ["History API limitado no preview."]);
+            return null;
+          }
+        };
+        window.history.pushState = function (state, title, url) {
+          try {
+            if (typeof url === "string") {
+              return nativePushState(state, title);
+            }
+            return nativePushState.apply(window.history, arguments);
+          } catch (_error) {
+            appendLog("warn", ["History API limitado no preview."]);
+            return null;
+          }
+        };
+
         window.addEventListener("error", function (event) {
           appendLog("error", ["Erro JS:", event.message, "(linha " + event.lineno + ")"]);
         });
 
-        var userCode = ${escapedJsLiteral};
-        try {
-          (new Function(userCode))();
-        } catch (error) {
-          appendLog("error", [error && error.message ? error.message : String(error)]);
-        }
+        var filesByPath = new Map();
+        workspaceFiles.forEach(function (file) {
+          filesByPath.set(normalizePath(file.name), file);
+        });
+
+        var cssFallback = workspaceFiles
+          .filter(function (file) { return file.language === "css"; })
+          .map(function (file) { return file.content || ""; })
+          .join("\\n\\n");
+        var jsFallback = workspaceFiles
+          .filter(function (file) { return file.language === "js"; })
+          .map(function (file) { return file.content || ""; })
+          .join("\\n\\n");
+
+        var isExternalHref = function (href) {
+          return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href) || href.startsWith("//");
+        };
+
+        var resolvePath = function (basePath, href) {
+          try {
+            var base = new URL(basePath || "index.html", "https://preview.local/");
+            var resolved = new URL(href, base);
+            return normalizePath(resolved.pathname);
+          } catch {
+            return normalizePath(href);
+          }
+        };
+
+        var resolveHash = function (href) {
+          var hashIndex = href.indexOf("#");
+          if (hashIndex === -1) return "";
+          return href.slice(hashIndex + 1).trim();
+        };
+
+        var scrollToHash = function (hashValue) {
+          var cleaned = (hashValue || "").replace(/^#+/, "");
+          if (!cleaned) return;
+
+          var decoded = cleaned;
+          try {
+            decoded = decodeURIComponent(cleaned);
+          } catch (_error) {
+            decoded = cleaned;
+          }
+
+          var targetElement = document.getElementById(decoded);
+          if (!targetElement) {
+            var safeName = decoded.replace(/["\\\\]/g, "\\\\$&");
+            targetElement = document.querySelector('[name="' + safeName + '"]');
+          }
+
+          if (!targetElement || !(targetElement instanceof Element)) {
+            appendLog("warn", ["Âncora não encontrada:", "#" + decoded]);
+            return;
+          }
+
+          targetElement.scrollIntoView({ block: "start" });
+        };
+
+        var runInlineScript = function (source) {
+          if (!source.trim()) return;
+          var script = document.createElement("script");
+          script.text = source;
+          document.body.appendChild(script);
+          script.remove();
+        };
+
+        var runExternalScript = function (src) {
+          var script = document.createElement("script");
+          script.src = src;
+          document.body.appendChild(script);
+        };
+
+        var currentPath = initialPath;
+
+        var renderPath = function (path) {
+          var normalizedPath = normalizePath(path);
+          var file = filesByPath.get(normalizedPath);
+          if (!file || file.language !== "html") {
+            appendLog("warn", ["Ficheiro HTML não encontrado:", normalizedPath]);
+            return;
+          }
+
+          var doc = parser.parseFromString(file.content || "<body></body>", "text/html");
+          document.title = (doc.title || "Preview").trim() || "Preview";
+
+          var styleChunks = [cssFallback];
+          Array.prototype.forEach.call(doc.querySelectorAll("style"), function (styleNode) {
+            styleChunks.push(styleNode.textContent || "");
+          });
+          Array.prototype.forEach.call(doc.querySelectorAll('link[rel="stylesheet"][href]'), function (linkNode) {
+            var href = linkNode.getAttribute("href") || "";
+            if (!href || isExternalHref(href)) {
+              return;
+            }
+
+            var resolvedPath = resolvePath(normalizedPath, href);
+            var cssFile = filesByPath.get(resolvedPath);
+            if (cssFile && cssFile.language === "css") {
+              styleChunks.push(cssFile.content || "");
+            }
+          });
+          styleTag.textContent = styleChunks.filter(Boolean).join("\\n\\n");
+
+          root.innerHTML = doc.body ? doc.body.innerHTML : (doc.documentElement ? doc.documentElement.innerHTML : "");
+
+          var scripts = Array.prototype.slice.call(doc.querySelectorAll("script"));
+          if (scripts.length === 0 && jsFallback.trim()) {
+            runInlineScript(jsFallback);
+          } else {
+            scripts.forEach(function (scriptNode) {
+              var src = scriptNode.getAttribute("src");
+              if (src && !isExternalHref(src)) {
+                var resolvedPath = resolvePath(normalizedPath, src);
+                var jsFile = filesByPath.get(resolvedPath);
+                if (jsFile && jsFile.language === "js") {
+                  runInlineScript(jsFile.content || "");
+                  return;
+                }
+              }
+
+              if (src) {
+                runExternalScript(src);
+                return;
+              }
+
+              runInlineScript(scriptNode.textContent || "");
+            });
+          }
+
+          currentPath = normalizedPath;
+        };
+
+        document.addEventListener("click", function (event) {
+          var target = event.target;
+          if (!target || !(target instanceof Element)) return;
+
+          var anchor = target.closest("a[href]");
+          if (!anchor) return;
+          if (anchor.getAttribute("target") === "_blank") return;
+
+          var href = anchor.getAttribute("href") || "";
+          if (!href || isExternalHref(href)) return;
+
+          var hash = resolveHash(href);
+          var hrefWithoutHash = href.split("#")[0] || "";
+          if (hrefWithoutHash === "" && hash) {
+            event.preventDefault();
+            scrollToHash(hash);
+            return;
+          }
+
+          var resolvedPath = resolvePath(currentPath, hrefWithoutHash || href);
+          var targetFile = filesByPath.get(resolvedPath);
+
+          if (targetFile && targetFile.language === "html") {
+            event.preventDefault();
+            renderPath(resolvedPath);
+            if (hash) {
+              window.requestAnimationFrame(function () {
+                scrollToHash(hash);
+              });
+            }
+            return;
+          }
+
+          event.preventDefault();
+          appendLog("warn", ["Link ignorado no preview:", href]);
+        }, true);
+
+        renderPath(initialPath);
       })();
     </script>
   </body>
@@ -633,73 +924,6 @@ const normalizeContains = (value: string): string =>
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
-
-const deriveValidationRulesFromLesson = (lesson: Lesson): CodeValidationRule[] => {
-  const rules: CodeValidationRule[] = [];
-  const seen = new Set<string>();
-
-  const pushRule = (rule: CodeValidationRule) => {
-    const key = `${rule.kind}:${rule.value}`.toLowerCase();
-    if (!rule.value.trim() || seen.has(key)) return;
-    seen.add(key);
-    rules.push(rule);
-  };
-
-  if (lesson.htmlCode) {
-    const idMatches = Array.from(lesson.htmlCode.matchAll(/id\s*=\s*["']([^"']+)["']/gi));
-    idMatches.slice(0, 4).forEach((match) => {
-      pushRule({ kind: "selector_exists", value: `#${match[1].trim()}` });
-    });
-
-    const classMatches = Array.from(lesson.htmlCode.matchAll(/class\s*=\s*["']([^"']+)["']/gi));
-    classMatches.slice(0, 4).forEach((match) => {
-      const className = match[1].trim().split(/\s+/).find(Boolean);
-      if (className) {
-        pushRule({ kind: "selector_exists", value: `.${className}` });
-      }
-    });
-
-    if (rules.length < 2) {
-      const tagMatches = Array.from(lesson.htmlCode.matchAll(/<([a-z][a-z0-9-]*)\b/gi));
-      tagMatches
-        .map((match) => match[1].toLowerCase())
-        .filter((tag) => !["html", "head", "body", "meta", "title", "style", "script", "link"].includes(tag))
-        .slice(0, 3)
-        .forEach((tag) => {
-          pushRule({ kind: "html_includes", value: `<${tag}` });
-        });
-    }
-  }
-
-  if (lesson.cssCode) {
-    const selectorMatches = Array.from(lesson.cssCode.matchAll(/(^|\n)\s*([^@\n][^{]+)\{/g));
-    selectorMatches.slice(0, 3).forEach((match) => {
-      const selector = match[2].split(",")[0]?.trim();
-      if (selector && selector.length < 80) {
-        pushRule({ kind: "css_includes", value: selector });
-      }
-    });
-  }
-
-  if (lesson.jsCode) {
-    const jsSignals = [
-      "addEventListener",
-      "querySelector",
-      "getElementById",
-      "classList",
-      "textContent",
-      "innerHTML",
-    ];
-
-    jsSignals.forEach((signal) => {
-      if (lesson.jsCode?.includes(signal)) {
-        pushRule({ kind: "js_includes", value: signal });
-      }
-    });
-  }
-
-  return rules.slice(0, 8);
-};
 
 const evaluateCodeRules = (code: LessonCodeState, rules: CodeValidationRule[]): string[] => {
   if (rules.length === 0) return [];
@@ -824,13 +1048,16 @@ const StudentPlayerPage = () => {
   const [entryHtmlFileByLesson, setEntryHtmlFileByLesson] = useState<Record<string, string>>({});
   const [fileComposerOpen, setFileComposerOpen] = useState(false);
   const [newFileName, setNewFileName] = useState("");
+  const [fileRenameOpen, setFileRenameOpen] = useState(false);
+  const [pendingRenameName, setPendingRenameName] = useState("");
+  const [fileDeleteOpen, setFileDeleteOpen] = useState(false);
   const [draggingFileId, setDraggingFileId] = useState<string | null>(null);
   const [quizStateByLesson, setQuizStateByLesson] = useState<Record<string, QuizAttemptState>>({});
   const [previewDoc, setPreviewDoc] = useState("");
   const [previewVersion, setPreviewVersion] = useState(0);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("split");
   const [filesPanelOpen, setFilesPanelOpen] = useState(false);
-  const [hintRevealCountByLesson, setHintRevealCountByLesson] = useState<Record<string, number>>({});
+  const [hintExpandedByLesson, setHintExpandedByLesson] = useState<Record<string, boolean>>({});
   const [lessonPaneWidth, setLessonPaneWidth] = useState(32);
   const [editorPaneRatio, setEditorPaneRatio] = useState(52);
   const [dragTarget, setDragTarget] = useState<"lesson" | "editor" | null>(null);
@@ -1006,12 +1233,21 @@ const StudentPlayerPage = () => {
 
     setEntryHtmlFileByLesson((prev) => {
       if (prev[currentLesson.id]) return prev;
+      const files = workspaceFilesByLesson[currentLesson.id] || resolveWorkspaceFiles(currentLesson);
+      const persistedEntry = (currentLesson.entryHtmlFileId || "").trim();
+      const validPersistedEntry = files.some((file) => file.id === persistedEntry && file.language === "html")
+        ? persistedEntry
+        : "";
+      const fallbackEntry = files.find((file) => file.name.toLowerCase() === "index.html" && file.language === "html")?.id
+        || files.find((file) => file.language === "html")?.id
+        || "";
+
       return {
         ...prev,
-        [currentLesson.id]: `${currentLesson.id}-index-html`,
+        [currentLesson.id]: validPersistedEntry || fallbackEntry,
       };
     });
-  }, [currentLesson, isCodeLesson]);
+  }, [currentLesson, isCodeLesson, workspaceFilesByLesson]);
 
   useEffect(() => {
     setFileComposerOpen(false);
@@ -1057,17 +1293,16 @@ const StudentPlayerPage = () => {
 
     const timer = window.setTimeout(() => {
       setPreviewDoc(
-        buildPreviewDoc({
-          html: currentCode.html,
-          css: currentCode.css,
-          js: currentCode.js,
-        }),
+        buildPreviewDoc(
+          currentWorkspaceFiles,
+          currentLesson ? entryHtmlFileByLesson[currentLesson.id] : undefined,
+        ),
       );
       setPreviewVersion((prev) => prev + 1);
     }, 220);
 
     return () => window.clearTimeout(timer);
-  }, [currentLesson, currentCode.css, currentCode.html, currentCode.js, isCodeLesson]);
+  }, [currentLesson, currentWorkspaceFiles, entryHtmlFileByLesson, isCodeLesson]);
 
   useEffect(() => {
     if (!currentLesson || !isCodeLesson) return;
@@ -1191,6 +1426,20 @@ const StudentPlayerPage = () => {
   const nextLesson = currentIndex < allLessons.length - 1 ? allLessons[currentIndex + 1] : null;
   const progress = allLessons.length > 0 ? (completedLessons.length / allLessons.length) * 100 : 0;
   const embeddedVideoUrl = toEmbedVideoUrl(currentLesson.videoUrl);
+  const textMediaType = currentLesson.type === "text"
+    ? (
+      currentLesson.textMediaType
+      || (currentLesson.textMediaImageUrl ? "image" : currentLesson.textMediaYoutubeUrl || currentLesson.videoUrl ? "youtube" : "none")
+    )
+    : "none";
+  const textMediaImageUrl = currentLesson.type === "text" ? (currentLesson.textMediaImageUrl || null) : null;
+  const textMediaYoutubeUrl = currentLesson.type === "text"
+    ? (currentLesson.textMediaYoutubeUrl || currentLesson.videoUrl || null)
+    : null;
+  const embeddedTextMediaYoutubeUrl = toEmbedVideoUrl(textMediaYoutubeUrl);
+  const hasTextImageMedia = Boolean(textMediaType === "image" && textMediaImageUrl);
+  const hasTextYoutubeMedia = Boolean(textMediaType === "youtube" && textMediaYoutubeUrl);
+  const hasTextMedia = Boolean(isTextLesson && (hasTextImageMedia || hasTextYoutubeMedia));
   const instructionContent = defaultInstructions(currentLesson);
   const parsedLessonContent = parseLessonContent(instructionContent);
 
@@ -1223,7 +1472,12 @@ const StudentPlayerPage = () => {
   };
 
   const runCode = () => {
-    setPreviewDoc(buildPreviewDoc(currentCode));
+    setPreviewDoc(
+      buildPreviewDoc(
+        currentWorkspaceFiles,
+        currentLesson ? entryHtmlFileByLesson[currentLesson.id] : undefined,
+      ),
+    );
     setPreviewVersion((prev) => prev + 1);
   };
 
@@ -1275,7 +1529,10 @@ const StudentPlayerPage = () => {
     }));
     setEntryHtmlFileByLesson((prev) => ({
       ...prev,
-      [currentLesson.id]: `${currentLesson.id}-index-html`,
+      [currentLesson.id]: (currentLesson.entryHtmlFileId || "").trim()
+        || baseline.find((file) => file.name.toLowerCase() === "index.html" && file.language === "html")?.id
+        || baseline.find((file) => file.language === "html")?.id
+        || "",
     }));
 
     setCodeValidationFeedbackByLesson((prev) => {
@@ -1290,7 +1547,7 @@ const StudentPlayerPage = () => {
       codeIsCorrect: false,
     });
 
-    setPreviewDoc(buildPreviewDoc(buildCodeFromWorkspaceFiles(baseline)));
+    setPreviewDoc(buildPreviewDoc(baseline, `${currentLesson.id}-index-html`));
     setPreviewVersion((prev) => prev + 1);
     toast({
       title: "Lição reiniciada",
@@ -1344,11 +1601,14 @@ const StudentPlayerPage = () => {
 
   const renameActiveFile = () => {
     if (!isCodeLesson || !currentLesson || !activeFile) return;
+    setPendingRenameName(activeFile.name);
+    setFileRenameOpen(true);
+  };
 
-    const nextName = window.prompt("Novo nome do ficheiro", activeFile.name);
-    if (!nextName) return;
-
-    const normalizedName = nextName.trim();
+  const commitRenameFile = () => {
+    if (!currentLesson || !activeFile) return;
+    const normalizedName = pendingRenameName.trim();
+    setFileRenameOpen(false);
     if (!normalizedName || normalizedName === activeFile.name) return;
 
     const exists = currentWorkspaceFiles.some(
@@ -1394,9 +1654,12 @@ const StudentPlayerPage = () => {
       });
       return;
     }
+    setFileDeleteOpen(true);
+  };
 
-    const confirmed = window.confirm(`Eliminar o ficheiro ${activeFile.name}?`);
-    if (!confirmed) return;
+  const commitDeleteFile = () => {
+    if (!currentLesson || !activeFile) return;
+    setFileDeleteOpen(false);
 
     const nextFiles = currentWorkspaceFiles.filter((file) => file.id !== activeFile.id);
 
@@ -1517,7 +1780,6 @@ const StudentPlayerPage = () => {
     && (
       currentProgress?.codeIsCorrect
       || currentProgress?.status === "completed"
-      || currentCodeValidation?.isCorrect
     ),
   );
 
@@ -1548,8 +1810,13 @@ const StudentPlayerPage = () => {
     }
 
     if (!feedbackMessage) {
-      const fallbackRules = deriveValidationRulesFromLesson(currentLesson);
-      const effectiveRules = lessonContentRules.length > 0 ? lessonContentRules : fallbackRules;
+      if (lessonValidationRules.length === 0) {
+        feedbackMessage = "Resultado incorreto: esta lição não possui regras de validação configuradas.";
+      }
+    }
+
+    if (!feedbackMessage) {
+      const effectiveRules = lessonValidationRules;
       const failures = evaluateCodeRules(currentCode, effectiveRules);
 
       if (failures.length > 0) {
@@ -1570,17 +1837,13 @@ const StudentPlayerPage = () => {
       [currentLesson.id]: feedback,
     }));
 
-    setCompletedLessons((prev) => {
-      if (codeIsCorrect) {
-        return prev.includes(currentLesson.id) ? prev : [...prev, currentLesson.id];
-      }
-
-      return prev.filter((lessonId) => lessonId !== currentLesson.id);
-    });
-
     void persistLessonProgress(currentLesson.id, {
       status: codeIsCorrect ? "completed" : "in_progress",
-      codeIsCorrect,
+      submittedCode: {
+        html: currentCode.html,
+        css: currentCode.css,
+        js: currentCode.js,
+      },
     });
   };
 
@@ -1685,8 +1948,7 @@ const StudentPlayerPage = () => {
 
     void persistLessonProgress(currentLesson.id, {
       status: passed ? "completed" : "in_progress",
-      quizScore: score,
-      quizPassed: passed,
+      quizAnswers: currentQuizState.selectedAnswers,
     });
 
     toast({
@@ -1717,8 +1979,7 @@ const StudentPlayerPage = () => {
     setCompletedLessons((prev) => prev.filter((lessonId) => lessonId !== currentLesson.id));
     void persistLessonProgress(currentLesson.id, {
       status: "in_progress",
-      quizScore: 0,
-      quizPassed: false,
+      quizAnswers: {},
     });
   };
 
@@ -1736,8 +1997,7 @@ const StudentPlayerPage = () => {
     if (isCodePracticeLesson(lesson)) {
       return Boolean(
         progressEntry?.codeIsCorrect
-        || progressEntry?.status === "completed"
-        || codeValidationFeedbackByLesson[lesson.id]?.isCorrect,
+        || progressEntry?.status === "completed",
       );
     }
 
@@ -1761,9 +2021,15 @@ const StudentPlayerPage = () => {
   const desktopLayoutStyle = (() => {
     if (isMobile) return undefined;
 
-    if (isQuizLesson || isTextLesson) {
+    if (isQuizLesson) {
       return {
         gridTemplateColumns: "100%",
+      };
+    }
+
+    if (isTextLesson) {
+      return {
+        gridTemplateColumns: hasTextMedia ? "38% 62%" : "100%",
       };
     }
 
@@ -1794,7 +2060,10 @@ const StudentPlayerPage = () => {
 
   const isWorkspaceFocused = isCodeLesson && !isMobile && workspaceMode !== "split";
   const showLessonPane = !isQuizLesson && (!isCodeLesson || isMobile || workspaceMode === "split");
-  const showMiddlePane = isQuizLesson || (isCodeLesson && (isMobile || workspaceMode !== "preview")) || (!isVideoLesson && !isCodeLesson && !isQuizLesson);
+  const showMiddlePane = isQuizLesson
+    || (isCodeLesson && (isMobile || workspaceMode !== "preview"))
+    || (isTextLesson && hasTextMedia)
+    || (!isVideoLesson && !isCodeLesson && !isQuizLesson && !isTextLesson);
   const showPreviewPane = !isQuizLesson && !isTextLesson && (isMobile || !isCodeLesson || workspaceMode !== "code");
   const quizPassedFromProgress = Boolean(currentProgress?.quizPassed || currentProgress?.status === "completed");
   const quizAdvanceLocked = Boolean(isQuizLesson && !quizPassedFromProgress && !currentQuizState?.passed);
@@ -1806,10 +2075,43 @@ const StudentPlayerPage = () => {
   const lessonHints = parsedLessonContent.hints;
   const lessonTip = parsedLessonContent.hint;
   const lessonContentRules = parsedLessonContent.tests;
+  const lessonValidationRules = currentLesson.validationRules && currentLesson.validationRules.length > 0
+    ? currentLesson.validationRules
+    : lessonContentRules;
   const lessonExamples = parsedLessonContent.examples;
   const lessonTheory = parsedLessonContent.theory || instructionContent;
-  const currentHintRevealCount = currentLesson ? (hintRevealCountByLesson[currentLesson.id] || 0) : 0;
-  const visibleHints = lessonHints.slice(0, currentHintRevealCount);
+  const lessonTheoryParagraphs = lessonTheory
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const visualLeadText = lessonTheoryParagraphs[0]
+    || `Nesta lição vais aprofundar "${currentLesson.title}" com foco prático e contexto real de interface.`;
+  const visualSupportText = lessonTheoryParagraphs[1]
+    || "Observa como este conceito aparece na interface e quais decisões de CSS tornam a experiência mais clara.";
+  const textVisualPoints = [
+    ...lessonObjectives,
+    ...instructionChecklist,
+  ]
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .slice(0, 4);
+  const textVisualBadges = textVisualPoints.length > 0
+    ? textVisualPoints
+    : [
+      "Estrutura visual consistente",
+      "Boa legibilidade",
+      "Espaçamento equilibrado",
+      "Comportamento responsivo",
+    ];
+  const resolvedHints = lessonHints.length > 0
+    ? lessonHints
+    : lessonTip
+      ? [lessonTip]
+      : [];
+  const hasMultipleHints = resolvedHints.length > 1;
+  const hintCollapsedLabel = hasMultipleHints ? "Precisas de ajuda? Ver dicas" : "Precisas de ajuda? Ver dica";
+  const hintExpandedLabel = hasMultipleHints ? "Dicas" : "Dica";
+  const isHintExpanded = currentLesson ? Boolean(hintExpandedByLesson[currentLesson.id]) : false;
   const currentQuizQuestionAnswered = Boolean(
     currentQuizQuestion && currentQuizState?.selectedAnswers[currentQuizQuestion.id] !== undefined,
   );
@@ -1825,7 +2127,9 @@ const StudentPlayerPage = () => {
       ? "Questionário"
       : currentLesson.type === "text"
         ? "Teoria"
-        : "Prática";
+        : currentLesson.type === "project"
+          ? "Projecto"
+          : "Prática";
 
   if (progressHydrated && currentIndex > maxUnlockedLessonIndex) {
     const fallbackLesson = allLessons[maxUnlockedLessonIndex] || allLessons[0];
@@ -1863,85 +2167,18 @@ const StudentPlayerPage = () => {
       </header>
 
       <div className="flex-1 min-h-0 flex">
-        <Sheet open={lessonDrawerOpen} onOpenChange={setLessonDrawerOpen}>
-          <SheetContent
-            side="left"
-            className="w-[88vw] max-w-[420px] border-r border-white/15 bg-[#060606] p-0 text-white [&>button]:text-white [&>button:hover]:bg-white/10"
-          >
-            <SheetHeader className="sr-only">
-              <SheetTitle>Lições do curso</SheetTitle>
-            </SheetHeader>
-
-            <div className="flex h-full flex-col">
-              <div className="border-b border-white/10 p-5 space-y-3">
-                <Link
-                  to={`/course/${course.id}`}
-                  onClick={() => setLessonDrawerOpen(false)}
-                  className="inline-flex items-center rounded-md border border-white/20 px-3 py-2 text-sm font-medium text-white hover:bg-white/10"
-                >
-                  <ChevronLeft className="mr-1 h-4 w-4" />
-                  Voltar ao curso
-                </Link>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.14em] text-white/60">Módulo</p>
-                  <p className="mt-1 text-2xl font-semibold">{course.title}</p>
-                  <p className="mt-1 text-sm text-white/70">
-                    {completedLessons.length}/{allLessons.length} concluídas
-                  </p>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-white/15">
-                  <div className="h-full rounded-full bg-white transition-[width] duration-300" style={{ width: `${progress}%` }} />
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto">
-                {sections.map((section) => (
-                  <div key={section.id}>
-                    <div className="px-5 py-2 text-xs uppercase tracking-[0.14em] text-white/55 border-b border-white/5">
-                      {section.title}
-                    </div>
-                    {section.lessons.map((lesson) => {
-                      const active = lesson.id === currentLesson.id;
-                      const done = completedLessons.includes(lesson.id);
-                      const lessonIndex = lessonIndexById[lesson.id] ?? 0;
-                      const blockedByGate = lessonIndex > maxUnlockedLessonIndex;
-
-                      if (blockedByGate) {
-                        return (
-                          <div
-                            key={lesson.id}
-                            className="flex items-center gap-2 border-b border-white/5 px-5 py-3 text-sm text-white/55"
-                          >
-                            <Circle className="h-4 w-4 shrink-0" />
-                            <span className="truncate">{lesson.title}</span>
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <Link
-                          key={lesson.id}
-                          to={`/student/${course.id}/${lesson.id}`}
-                          onClick={() => setLessonDrawerOpen(false)}
-                          className={`flex items-center gap-2 border-b border-white/5 px-5 py-3 text-sm transition-colors ${
-                            active ? "bg-white/10 text-white" : "text-white/85 hover:bg-white/5"
-                          }`}
-                        >
-                          {done ? (
-                            <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
-                          ) : (
-                            <Circle className="h-4 w-4 shrink-0 text-white/45" />
-                          )}
-                          <span className="truncate">{lesson.title}</span>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </SheetContent>
-        </Sheet>
+        <LessonSidebar
+          open={lessonDrawerOpen}
+          onOpenChange={setLessonDrawerOpen}
+          course={course}
+          sections={sections}
+          currentLessonId={currentLesson.id}
+          completedLessons={completedLessons}
+          allLessonsCount={allLessons.length}
+          progress={progress}
+          lessonIndexById={lessonIndexById}
+          maxUnlockedLessonIndex={maxUnlockedLessonIndex}
+        />
 
         <main
           className={`flex-1 min-w-0 min-h-0 overflow-hidden flex flex-col ${
@@ -1969,7 +2206,7 @@ const StudentPlayerPage = () => {
                     <p className="mt-3 whitespace-pre-wrap leading-7 text-black">{lessonTheory}</p>
                   </article>
 
-                  {lessonObjectives.length > 0 && (
+                  {!isTextLesson && lessonObjectives.length > 0 && (
                     <article className="rounded-lg border border-black/10 bg-white p-4">
                       <p className="text-[11px] uppercase tracking-[0.14em] text-black/50">Objetivos</p>
                       <ul className="mt-3 space-y-2">
@@ -1983,7 +2220,7 @@ const StudentPlayerPage = () => {
                     </article>
                   )}
 
-                  {instructionChecklist.length > 0 && (
+                  {!isTextLesson && instructionChecklist.length > 0 && (
                     <article className="rounded-lg border border-black/10 bg-white p-4">
                       <p className="text-[11px] uppercase tracking-[0.14em] text-black/50">Instruções</p>
                       <ol className="mt-3 space-y-2">
@@ -1999,7 +2236,7 @@ const StudentPlayerPage = () => {
                     </article>
                   )}
 
-                  {lessonExamples.length > 0 && (
+                  {!isTextLesson && lessonExamples.length > 0 && (
                     <article className="rounded-lg border border-black/10 bg-white p-4 space-y-3">
                       <p className="text-[11px] uppercase tracking-[0.14em] text-black/50">Exemplos</p>
                       {lessonExamples.map((example, index) => (
@@ -2020,6 +2257,7 @@ const StudentPlayerPage = () => {
                             language={example.language}
                             value={truncateCodeSnippet(example.code, 18)}
                             readOnly
+                            wrapLines
                             className="rounded-md border border-black/15 bg-[#111111]"
                             minHeightClassName="min-h-[96px]"
                           />
@@ -2028,11 +2266,11 @@ const StudentPlayerPage = () => {
                     </article>
                   )}
 
-                  {lessonContentRules.length > 0 && isCodeLesson && (
+                  {lessonValidationRules.length > 0 && isCodeLesson && (
                     <article className="rounded-lg border border-black/10 bg-white p-4">
                       <p className="text-[11px] uppercase tracking-[0.14em] text-black/50">Validação automática</p>
                       <ul className="mt-3 space-y-2">
-                        {lessonContentRules.map((rule, index) => (
+                        {lessonValidationRules.map((rule, index) => (
                           <li key={`${currentLesson.id}-rule-${index}`} className="text-sm text-black/75">
                             {rule.kind === "selector_exists"
                               ? `Elemento obrigatório: ${rule.value}`
@@ -2049,41 +2287,65 @@ const StudentPlayerPage = () => {
                     </article>
                   )}
 
-                  {(lessonHints.length > 0 || lessonTip) && (
-                    <aside className="rounded-lg border border-black/20 bg-[#fff2b2] px-4 py-3 text-sm text-black/85 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold">Dicas</p>
-                        {currentLesson && lessonHints.length > currentHintRevealCount && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-7 border-black/20 bg-white/70 px-2 text-xs text-black hover:bg-white"
-                            onClick={() =>
-                              setHintRevealCountByLesson((prev) => ({
-                                ...prev,
-                                [currentLesson.id]: Math.min(
-                                  lessonHints.length,
-                                  (prev[currentLesson.id] || 0) + 1,
-                                ),
-                              }))
-                            }
-                          >
-                            Mostrar dica {Math.min(lessonHints.length, currentHintRevealCount + 1)}
-                          </Button>
+                  {!isTextLesson && resolvedHints.length > 0 && (
+                    <aside className="overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-sm">
+                      <button
+                        type="button"
+                        aria-expanded={isHintExpanded}
+                        className="flex w-full items-center justify-between gap-3 bg-secondary/80 px-4 py-3.5 text-left transition-colors hover:bg-accent-soft"
+                        onClick={() => {
+                          if (!currentLesson) return;
+                          setHintExpandedByLesson((prev) => ({
+                            ...prev,
+                            [currentLesson.id]: !prev[currentLesson.id],
+                          }));
+                        }}
+                      >
+                        <span className="text-lg font-display md:text-xl">
+                          {isHintExpanded ? hintExpandedLabel : hintCollapsedLabel}
+                        </span>
+                        {isHintExpanded ? (
+                          <ChevronUp className="h-5 w-5 shrink-0 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="h-5 w-5 shrink-0 text-muted-foreground" />
                         )}
-                      </div>
+                      </button>
 
-                      {visibleHints.length > 0 ? (
-                        <ul className="space-y-1.5">
-                          {visibleHints.map((hint, index) => (
-                            <li key={`${currentLesson.id}-hint-${index}`} className="leading-6">{hint}</li>
-                          ))}
-                        </ul>
-                      ) : lessonTip ? (
-                        <p>{lessonTip}</p>
-                      ) : (
-                        <p className="text-black/70">Revela uma dica quando precisares.</p>
+                      {isHintExpanded && (
+                        <div className="border-t border-border bg-surface-sunken px-4 py-5">
+                          <ol className="space-y-5">
+                            {resolvedHints.map((hint, index) => {
+                              const segments = parseHintSegments(hint);
+
+                              return (
+                                <li key={`${currentLesson.id}-hint-${index}`} className="flex items-start gap-3">
+                                  <span className="mt-1 inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-accent px-1 text-xs font-semibold text-accent-foreground">
+                                    {index + 1}
+                                  </span>
+                                  <div className="min-w-0 flex-1 space-y-3 text-base leading-7 text-foreground/90">
+                                    {segments.map((segment, segmentIndex) => (
+                                      segment.kind === "code" ? (
+                                        <CodeHighlightEditor
+                                          key={`${currentLesson.id}-hint-${index}-segment-${segmentIndex}`}
+                                          language={segment.language}
+                                          value={segment.value}
+                                          readOnly
+                                          wrapLines
+                                          className="rounded-md border border-border bg-[#111111]"
+                                          minHeightClassName="min-h-[120px]"
+                                        />
+                                      ) : (
+                                        <p key={`${currentLesson.id}-hint-${index}-segment-${segmentIndex}`} className="whitespace-pre-wrap">
+                                          {renderInlineHintText(segment.value)}
+                                        </p>
+                                      )
+                                    ))}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        </div>
                       )}
                     </aside>
                   )}
@@ -2117,51 +2379,92 @@ const StudentPlayerPage = () => {
                   isWorkspaceFocused ? "rounded-none border-0" : "rounded-lg border border-border"
                 }`}
               >
-                <div className="h-12 px-2 md:px-3 border-b border-primary-foreground/20 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1">
+                <div className="h-12 px-2 border-b border-primary-foreground/20 bg-[#0b0b16] flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex items-center gap-1.5">
+                    {filesPanelOpen ? (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-primary-foreground hover:bg-primary-foreground/10"
+                        onClick={() => setFilesPanelOpen(false)}
+                        title="Fechar painel de ficheiros"
+                      >
+                        <XCircle className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-primary-foreground hover:bg-primary-foreground/10"
+                        onClick={() => setFilesPanelOpen(true)}
+                        title="Abrir painel de ficheiros"
+                      >
+                        <Folder className="h-4 w-4" />
+                      </Button>
+                    )}
+
+                    {filesPanelOpen && (
+                      <>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-primary-foreground/90 hover:bg-primary-foreground/10"
+                          onClick={addWorkspaceFile}
+                          title="Novo ficheiro"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-primary-foreground/90 hover:bg-primary-foreground/10"
+                          onClick={renameActiveFile}
+                          disabled={!activeFile}
+                          title="Renomear ficheiro"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-primary-foreground/90 hover:bg-primary-foreground/10"
+                          onClick={deleteActiveFile}
+                          disabled={!activeFile || currentWorkspaceFiles.length <= 1}
+                          title="Eliminar ficheiro"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+
+                    <div className="min-w-0 flex items-center overflow-x-auto">
+                      {currentWorkspaceFiles.map((file) => (
+                        <button
+                          key={file.id}
+                          type="button"
+                          onClick={() =>
+                            setActiveFileByLesson((prev) => ({
+                              ...prev,
+                              [currentLesson.id]: file.id,
+                            }))
+                          }
+                          className={`h-8 shrink-0 border-b-2 px-3 text-sm transition-colors ${
+                            activeFile?.id === file.id
+                              ? "border-accent bg-primary-foreground/8 text-primary-foreground"
+                              : "border-transparent text-primary-foreground/70 hover:text-primary-foreground"
+                          }`}
+                        >
+                          {file.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {!isMobile && (
                     <Button
                       size="icon"
                       variant="ghost"
                       className="h-8 w-8 text-primary-foreground hover:bg-primary-foreground/10"
-                      onClick={() => setFilesPanelOpen((prev) => !prev)}
-                      title={filesPanelOpen ? "Ocultar ficheiros" : "Mostrar ficheiros"}
-                    >
-                      {filesPanelOpen ? <FolderOpen className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
-                      onClick={addWorkspaceFile}
-                    >
-                      <Plus className="h-4 w-4 mr-1" />
-                      Novo ficheiro
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
-                      onClick={renameActiveFile}
-                      disabled={!activeFile}
-                    >
-                      Renomear
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
-                      onClick={deleteActiveFile}
-                      disabled={!activeFile || currentWorkspaceFiles.length <= 1}
-                    >
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      Eliminar
-                    </Button>
-                  </div>
-                  {!isMobile && (
-                    <Button
-                      size="icon"
-                      variant="outline"
-                      className="h-8 bg-transparent border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
                       onClick={() => setWorkspaceMode((prev) => (prev === "code" ? "split" : "code"))}
                       title={workspaceMode === "code" ? "Minimizar código" : "Maximizar código"}
                     >
@@ -2214,9 +2517,75 @@ const StudentPlayerPage = () => {
                   </div>
                 )}
 
+                {fileRenameOpen && (
+                  <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/55 p-4">
+                    <div className="w-full max-w-md rounded-lg border border-primary-foreground/20 bg-[#0b0c15] p-4 space-y-3">
+                      <p className="text-sm font-semibold text-primary-foreground">Renomear ficheiro</p>
+                      <Input
+                        autoFocus
+                        value={pendingRenameName}
+                        onChange={(event) => setPendingRenameName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            commitRenameFile();
+                          }
+                          if (event.key === "Escape") setFileRenameOpen(false);
+                        }}
+                        className="h-9 border-primary-foreground/25 bg-black/40 text-primary-foreground"
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
+                          onClick={() => setFileRenameOpen(false)}
+                        >
+                          Cancelar
+                        </Button>
+                        <Button
+                          type="button"
+                          className="h-8 bg-accent hover:bg-accent-hover text-accent-foreground"
+                          onClick={commitRenameFile}
+                        >
+                          Renomear
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {fileDeleteOpen && activeFile && (
+                  <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/55 p-4">
+                    <div className="w-full max-w-md rounded-lg border border-primary-foreground/20 bg-[#0b0c15] p-4 space-y-3">
+                      <p className="text-sm font-semibold text-primary-foreground">Eliminar ficheiro</p>
+                      <p className="text-xs text-primary-foreground/65">
+                        Tens a certeza que queres eliminar <code className="text-primary-foreground/90">{activeFile.name}</code>? Esta ação não pode ser desfeita.
+                      </p>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="h-8 text-primary-foreground hover:bg-primary-foreground/10"
+                          onClick={() => setFileDeleteOpen(false)}
+                        >
+                          Cancelar
+                        </Button>
+                        <Button
+                          type="button"
+                          className="h-8 bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                          onClick={commitDeleteFile}
+                        >
+                          Eliminar
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="min-h-0 flex-1 flex overflow-hidden">
                   {filesPanelOpen && (
-                    <aside className="w-52 shrink-0 border-r border-primary-foreground/20 bg-[#0a0a14]">
+                    <aside className="w-60 shrink-0 border-r border-primary-foreground/20 bg-[#080912]">
                       <div className="h-10 px-3 border-b border-primary-foreground/15 flex items-center text-[11px] uppercase tracking-wide text-primary-foreground/60">
                         ficheiros
                       </div>
@@ -2276,11 +2645,6 @@ const StudentPlayerPage = () => {
                   )}
 
                   <div className="min-w-0 flex-1 flex flex-col">
-                    <div className="h-10 px-4 flex items-center border-b border-primary-foreground/15 text-primary-foreground/70 text-xs uppercase tracking-wide">
-                      <Code2 className="h-3.5 w-3.5 mr-2" />
-                      {activeFile?.name || "sem ficheiro"}
-                    </div>
-
                     <CodeHighlightEditor
                       key={activeFile?.id || "no-file"}
                       language={activeFile?.language || "html"}
@@ -2291,6 +2655,7 @@ const StudentPlayerPage = () => {
                       minHeightClassName="h-full min-h-0"
                       enableTabIndentation
                       indentWith="  "
+                      wrapLines
                     />
                   </div>
                 </div>
@@ -2346,187 +2711,33 @@ const StudentPlayerPage = () => {
                 )}
               </section>
             ) : isQuizLesson ? (
-              <section className="min-h-0 flex flex-col overflow-hidden rounded-lg border border-[#2a2a2a] bg-[#000000] text-[#f5f5f5]">
-                <div className="px-5 py-4 border-b border-[#1f1f1f] bg-[#050505]">
-                  <p className="text-xs uppercase tracking-[0.18em] text-[#a3a3a3]">Questionário</p>
-                  <h2 className="text-2xl font-semibold mt-1">{currentLesson.title}</h2>
-                  <p className="text-sm text-[#cfcfcf] mt-1">
-                    Nota mínima para avançar: <span className="font-semibold text-[#ffffff]">{quizPassPercentage}%</span>
-                  </p>
-                </div>
-
-                {quizQuestions.length === 0 ? (
-                  <div className="flex-1 p-6 flex items-center justify-center">
-                    <div className="rounded-lg border border-[#2f2f2f] bg-[#0c0c0c] px-5 py-4 max-w-md text-center">
-                      <AlertTriangle className="h-6 w-6 mx-auto text-[#ffffff]" />
-                      <p className="mt-3 font-medium">Questionário ainda não configurado</p>
-                      <p className="mt-1 text-sm text-[#b3b3b3]">O administrador precisa adicionar perguntas e respostas primeiro.</p>
-                    </div>
-                  </div>
-                ) : currentQuizState?.submitted ? (
-                  <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5">
-                    <div className="rounded-xl border border-[#2f2f2f] bg-[#0b0b0b] p-5">
-                      <div className="flex flex-col md:flex-row md:items-center gap-4 md:justify-between">
-                        <div className="flex items-center gap-4">
-                          <div
-                            className="h-16 w-16 rounded-full p-[3px]"
-                            style={{
-                              background: `conic-gradient(#ffffff ${(scoreCircleValue / 100) * 360}deg, #2a2a2a 0deg)`,
-                            }}
-                          >
-                            <div className="h-full w-full rounded-full bg-[#000000] flex items-center justify-center text-sm font-semibold">
-                              {scoreCircleValue}%
-                            </div>
-                          </div>
-                          <div>
-                            <p className="text-sm uppercase tracking-wide text-[#c2c2c2]">Resultado</p>
-                            <p className="text-xl font-semibold">
-                              {currentQuizState.passed ? "Aprovado" : "Reprovado"}
-                            </p>
-                            <p className="text-sm text-[#c2c2c2]">
-                              {currentQuizState.correctCount}/{currentQuizState.total} respostas corretas
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {currentQuizState.passed ? (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-[#183b2d] px-3 py-1 text-xs font-medium text-[#90f3c4] border border-[#2d7656]">
-                              <Trophy className="h-3.5 w-3.5" />
-                              Aprovado
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-[#4b1d2b] px-3 py-1 text-xs font-medium text-[#ff9bb6] border border-[#7a3248]">
-                              <XCircle className="h-3.5 w-3.5" />
-                              Repetir exercício
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      {orderedQuizQuestions.map((question, questionIndex) => {
-                        const selected = currentQuizState.selectedAnswers[question.id];
-                        const isCorrect = selected === question.correctOptionIndex;
-
-                        return (
-                          <article key={question.id} className="rounded-xl border border-[#2c2c2c] bg-[#0a0a0a] p-4 space-y-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <p className="font-medium">
-                                {questionIndex + 1}. {question.question}
-                              </p>
-                              {isCorrect ? (
-                                <CheckCircle2 className="h-5 w-5 text-[#6cf1b9] shrink-0" />
-                              ) : (
-                                <XCircle className="h-5 w-5 text-[#ff8fae] shrink-0" />
-                              )}
-                            </div>
-                            <div className="space-y-2">
-                              {question.options.map((option, optionIndex) => {
-                                const isSelected = selected === optionIndex;
-                                const isAnswer = optionIndex === question.correctOptionIndex;
-
-                                return (
-                                  <div
-                                    key={`${question.id}-option-${optionIndex}`}
-                                    className={`rounded-md px-3 py-2 text-sm border ${
-                                      isAnswer
-                                        ? "bg-[#173b2e] border-[#46be86] text-[#aff7d9]"
-                                        : isSelected
-                                          ? "bg-[#422338] border-[#a34967] text-[#ffc2d4]"
-                                          : "bg-[#0d0d0d] border-[#2b2b2b] text-[#d6d6d6]"
-                                    }`}
-                                  >
-                                    {option}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="px-5 py-3 border-b border-[#1f1f1f] bg-[#050505] space-y-2">
-                      <div className="flex items-center justify-between text-xs text-[#c2c2c2]">
-                        <span>
-                          Pergunta {(currentQuizState?.currentQuestionIndex || 0) + 1} de {orderedQuizQuestions.length}
-                        </span>
-                        <span>Tentativa {currentQuizState?.attemptNumber || 1}</span>
-                      </div>
-                      <Progress
-                        value={
-                          orderedQuizQuestions.length > 0
-                            ? (((currentQuizState?.currentQuestionIndex || 0) + 1) / orderedQuizQuestions.length) * 100
-                            : 0
-                        }
-                        className="h-2 bg-[#1f1f1f]"
-                      />
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto p-5 md:p-7 space-y-6">
-                      {currentQuizQuestion && (
-                        <>
-                          <h3 className="text-xl md:text-2xl font-semibold leading-relaxed">{currentQuizQuestion.question}</h3>
-                          <div className="space-y-3">
-                            {currentQuizQuestion.options.map((option, optionIndex) => {
-                              const isSelected = currentQuizState?.selectedAnswers[currentQuizQuestion.id] === optionIndex;
-
-                              return (
-                                <button
-                                  key={`${currentQuizQuestion.id}-${optionIndex}`}
-                                  type="button"
-                                  onClick={() => selectQuizOption(currentQuizQuestion.id, optionIndex)}
-                                  className={`w-full rounded-lg border px-4 py-3 text-left transition-colors ${
-                                    isSelected
-                                      ? "border-[#ffffff] bg-[#171717] text-[#ffffff]"
-                                      : "border-[#2d2d2d] bg-[#0c0c0c] text-[#ededed] hover:bg-[#1a1a1a]"
-                                  }`}
-                                >
-                                  {option}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="px-5 py-4 border-t border-[#1f1f1f] bg-[#050505] flex items-center justify-between gap-2">
-                      <Button
-                        variant="outline"
-                        className="border-[#4a4a4a] text-[#ffffff] bg-transparent hover:bg-[#121212]"
-                        disabled={(currentQuizState?.currentQuestionIndex || 0) === 0}
-                        onClick={goToPreviousQuizQuestion}
-                      >
-                        <ChevronLeft className="h-4 w-4 mr-1" />
-                        Anterior
-                      </Button>
-
-                      {(currentQuizState?.currentQuestionIndex || 0) < orderedQuizQuestions.length - 1 ? (
-                        <Button
-                          className="bg-[#ffffff] hover:bg-[#e8e8e8] text-[#000000]"
-                          disabled={!currentQuizQuestionAnswered}
-                          onClick={goToNextQuizQuestion}
-                        >
-                          Seguinte
-                          <ChevronRight className="h-4 w-4 ml-1" />
-                        </Button>
-                      ) : (
-                        <Button
-                          className="bg-[#ffffff] hover:bg-[#e8e8e8] text-[#000000]"
-                          disabled={quizHasUnanswered}
-                          onClick={submitQuiz}
-                        >
-                          Submeter Questionário
-                        </Button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </section>
+              <QuizSection
+                lessonTitle={currentLesson.title}
+                quizPassPercentage={quizPassPercentage}
+                orderedQuizQuestions={orderedQuizQuestions}
+                currentQuizQuestion={currentQuizQuestion}
+                currentQuizState={currentQuizState}
+                currentQuizQuestionAnswered={currentQuizQuestionAnswered}
+                quizHasUnanswered={quizHasUnanswered}
+                scoreCircleValue={scoreCircleValue}
+                onSelectOption={selectQuizOption}
+                onPreviousQuestion={goToPreviousQuizQuestion}
+                onNextQuestion={goToNextQuizQuestion}
+                onSubmit={submitQuiz}
+              />
+            ) : isTextLesson ? (
+              <TextMediaSection
+                lessonId={currentLesson.id}
+                lessonTitle={currentLesson.title}
+                courseTitle={course.title}
+                textMediaType={textMediaType}
+                textMediaImageUrl={textMediaImageUrl}
+                textMediaYoutubeUrl={textMediaYoutubeUrl}
+                embeddedTextMediaYoutubeUrl={embeddedTextMediaYoutubeUrl}
+                visualLeadText={visualLeadText}
+                visualSupportText={visualSupportText}
+                textVisualBadges={textVisualBadges}
+              />
             ) : (
               <section className="relative rounded-lg border border-border min-h-0 flex flex-col overflow-hidden bg-card">
                 <div className="h-12 px-4 border-b border-border flex items-center">
