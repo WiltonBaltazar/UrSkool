@@ -3,15 +3,20 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\NormalizesCourseAttributes;
 use App\Models\Course;
 use App\Models\LessonProgress;
 use App\Support\CourseProgressPresenter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class CourseController extends Controller
 {
+    use NormalizesCourseAttributes;
+    private const COURSES_PER_PAGE = 12;
+
     public function index(Request $request): JsonResponse
     {
         $query = Course::query();
@@ -33,10 +38,25 @@ class CourseController extends Controller
             }
         }
 
-        $courses = $query->orderByDesc('id')->get();
+        $isFiltered = $search !== '' || ($category !== '' && $category !== 'All' && $category !== 'Todas');
+        $page = max(1, (int) ($request->query('page') ?? 1));
+
+        if ($isFiltered) {
+            $paginator = $query->orderByDesc('id')->paginate(self::COURSES_PER_PAGE, ['*'], 'page', $page);
+        } else {
+            $cacheVersion = Cache::get('courses.cache_version', '0');
+            $cacheKey = "courses.index.v{$cacheVersion}.p{$page}";
+            $paginator = Cache::remember($cacheKey, 60, fn () => $query->orderByDesc('id')->paginate(self::COURSES_PER_PAGE, ['*'], 'page', $page));
+        }
 
         return response()->json([
-            'data' => $courses->map(fn (Course $course): array => $this->transformCourse($course)),
+            'data' => collect($paginator->items())->map(fn (Course $course): array => $this->transformCourse($course))->values(),
+            'meta' => [
+                'currentPage' => $paginator->currentPage(),
+                'lastPage'    => $paginator->lastPage(),
+                'perPage'     => $paginator->perPage(),
+                'total'       => $paginator->total(),
+            ],
         ]);
     }
 
@@ -194,7 +214,9 @@ class CourseController extends Controller
                         'title' => $lesson->title,
                         'duration' => $lesson->duration,
                         'videoUrl' => $lesson->video_url,
-                        'isFree' => (bool) $lesson->is_free,
+                        'textMediaType' => $lesson->text_media_type,
+                        'textMediaImageUrl' => $lesson->text_media_image_url,
+                        'textMediaYoutubeUrl' => $lesson->type === 'text' ? $lesson->video_url : null,
                         'type' => $lesson->type,
                         'language' => $lesson->language,
                         'content' => $lesson->content,
@@ -204,6 +226,7 @@ class CourseController extends Controller
                         'jsCode' => $lesson->js_code,
                         'workspaceFiles' => $lesson->workspace_files,
                         'entryHtmlFileId' => $lesson->entry_html_file_id,
+                        'validationRules' => $lesson->validation_rules,
                         'quizQuestions' => $lesson->quiz_questions,
                         'quizPassPercentage' => $lesson->quiz_pass_percentage,
                         'quizRandomizeQuestions' => $lesson->quiz_randomize_questions,
@@ -229,33 +252,4 @@ class CourseController extends Controller
             ->exists();
     }
 
-    private function normalizeCategory(string $value): string
-    {
-        return match ($value) {
-            'Web Development' => 'Desenvolvimento Web',
-            'Web Design' => 'Design Web',
-            'UI Design' => 'Design de UI',
-            default => $value,
-        };
-    }
-
-    private function legacyCategory(string $value): ?string
-    {
-        return match ($value) {
-            'Desenvolvimento Web' => 'Web Development',
-            'Design Web' => 'Web Design',
-            'Design de UI' => 'UI Design',
-            default => null,
-        };
-    }
-
-    private function normalizeLevel(string $value): string
-    {
-        return match ($value) {
-            'Beginner' => 'Iniciante',
-            'Intermediate' => 'Intermediário',
-            'Advanced' => 'Avançado',
-            default => $value,
-        };
-    }
 }

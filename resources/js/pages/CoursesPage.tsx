@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { Search } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,18 @@ import Navbar from "@/components/Navbar";
 import { fetchAuthUser, fetchCategories, fetchCourses } from "@/lib/api";
 
 const CoursesPage = () => {
+  const [searchParams] = useSearchParams();
   const [activeCategory, setActiveCategory] = useState("Todas");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("search") ?? "");
+  const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    setSearchQuery(searchParams.get("search") ?? "");
+  }, [searchParams]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeCategory, searchQuery]);
 
   const { data: categories = ["Todas"] } = useQuery({
     queryKey: ["categories"],
@@ -22,10 +32,13 @@ const CoursesPage = () => {
     queryFn: fetchAuthUser,
   });
 
-  const { data: courses = [], isLoading, isError } = useQuery({
-    queryKey: ["courses", activeCategory, searchQuery],
-    queryFn: () => fetchCourses({ category: activeCategory, search: searchQuery }),
+  const { data: coursesPage, isLoading, isError } = useQuery({
+    queryKey: ["courses", activeCategory, searchQuery, currentPage],
+    queryFn: () => fetchCourses({ category: activeCategory, search: searchQuery, page: currentPage }),
   });
+
+  const courses = coursesPage?.data ?? [];
+  const meta = coursesPage?.meta;
 
   return (
     <div className="min-h-screen bg-background">
@@ -36,7 +49,7 @@ const CoursesPage = () => {
           <div>
             <h1 className="font-display text-3xl text-foreground">Todos os Cursos de Programação</h1>
             <p className="text-muted-foreground font-body text-sm mt-1">
-              Explora o nosso catálogo completo de programação com {courses.length} cursos
+              Explora o nosso catálogo completo de programação com {meta?.total ?? courses.length} cursos
             </p>
           </div>
           <div className="relative max-w-xs w-full">
@@ -97,6 +110,32 @@ const CoursesPage = () => {
         {!isLoading && !isError && courses.length === 0 && (
           <div className="text-center py-16">
             <p className="text-muted-foreground font-body text-lg">Nenhum curso encontrado.</p>
+          </div>
+        )}
+
+        {!isLoading && !isError && meta && meta.lastPage > 1 && (
+          <div className="flex items-center justify-center gap-4 mt-10">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage((p) => p - 1)}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              Anterior
+            </Button>
+            <span className="text-sm font-body text-muted-foreground">
+              Página {currentPage} de {meta.lastPage}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage === meta.lastPage}
+              onClick={() => setCurrentPage((p) => p + 1)}
+            >
+              Seguinte
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
           </div>
         )}
       </div>

@@ -16,22 +16,23 @@ import StudentPlayerPage from "./pages/StudentPlayerPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import MyLearningPage from "./pages/MyLearningPage";
+import CertificatePage from "./pages/CertificatePage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
-class RouteErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+class RouteErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; message: string }> {
   constructor(props: { children: ReactNode }) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, message: "" };
   }
 
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error): { hasError: boolean; message: string } {
+    return { hasError: true, message: error?.message || String(error) };
   }
 
-  componentDidCatch(_error: Error, _errorInfo: ErrorInfo): void {
-    // Keep silent in UI; console already receives the stack in development.
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error("[RouteErrorBoundary]", error, errorInfo);
   }
 
   render() {
@@ -43,8 +44,13 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
         <div className="max-w-md text-center space-y-3">
           <p className="font-body text-muted-foreground">
-            Não foi possível abrir o leitor desta lição agora.
+            Erro ao carregar esta página.
           </p>
+          {this.state.message && (
+            <p className="font-mono text-xs text-destructive bg-destructive/10 rounded p-2 text-left break-all">
+              {this.state.message}
+            </p>
+          )}
           <Link to="/courses" className="text-accent hover:underline font-body">
             Voltar aos cursos
           </Link>
@@ -144,7 +150,9 @@ const App = () => (
             path="/courses/new"
             element={
               <RequireAdmin>
-                <CourseBuilderPage />
+                <RouteErrorBoundary>
+                  <CourseBuilderPage />
+                </RouteErrorBoundary>
               </RequireAdmin>
             }
           />
@@ -152,7 +160,9 @@ const App = () => (
             path="/courses/:courseId/edit"
             element={
               <RequireAdmin>
-                <CourseBuilderPage />
+                <RouteErrorBoundary>
+                  <CourseBuilderPage />
+                </RouteErrorBoundary>
               </RequireAdmin>
             }
           />
@@ -191,6 +201,7 @@ const App = () => (
               </RequireUser>
             }
           />
+          <Route path="/certificate/:code" element={<CertificatePage />} />
           <Route
             path="/student/:courseId/:lessonId"
             element={

@@ -141,6 +141,70 @@ class DashboardController extends Controller
             return $carry;
         }, []);
 
+        // Real engagement metrics
+        $sevenDaysAgo = now()->subDays(7);
+        $thirtyDaysAgo = now()->subDays(30);
+
+        $weeklyActiveLearners = LessonProgress::query()
+            ->where('updated_at', '>=', $sevenDaysAgo)
+            ->distinct('user_id')
+            ->count('user_id');
+
+        $weeklyLessonsCompleted = LessonProgress::query()
+            ->where('status', 'completed')
+            ->where('updated_at', '>=', $sevenDaysAgo)
+            ->count();
+
+        $avgLessonsPerActiveLearner = $weeklyActiveLearners > 0
+            ? round($weeklyLessonsCompleted / $weeklyActiveLearners, 1)
+            : 0;
+
+        $recentEnrolledUserIds = Enrollment::query()
+            ->where('status', 'completed')
+            ->where('created_at', '>=', $thirtyDaysAgo)
+            ->distinct()
+            ->pluck('user_id');
+
+        $activatedCount = $recentEnrolledUserIds->isNotEmpty()
+            ? LessonProgress::query()
+                ->whereIn('user_id', $recentEnrolledUserIds)
+                ->where('status', 'completed')
+                ->distinct('user_id')
+                ->count('user_id')
+            : 0;
+
+        $activationRate = $recentEnrolledUserIds->count() > 0
+            ? round(($activatedCount / $recentEnrolledUserIds->count()) * 100, 1)
+            : 0;
+
+        $totalCheckouts = Enrollment::query()->count();
+        $completedCheckouts = Enrollment::query()->where('status', 'completed')->count();
+        $checkoutConversionRate = $totalCheckouts > 0
+            ? round(($completedCheckouts / $totalCheckouts) * 100, 1)
+            : 0;
+
+        $totalLearnersWithRevenue = max(1, Enrollment::query()->where('status', 'completed')->distinct('user_id')->count('user_id'));
+        $revenuePerLearner = round($totalRevenue / $totalLearnersWithRevenue, 2);
+
+        $rawDailyActivity = LessonProgress::query()
+            ->selectRaw("DATE(updated_at) as activity_date, COUNT(DISTINCT user_id) as active_learners, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as lessons_completed")
+            ->where('updated_at', '>=', now()->subDays(13)->startOfDay())
+            ->groupByRaw('DATE(updated_at)')
+            ->orderBy('activity_date')
+            ->get()
+            ->keyBy('activity_date');
+
+        $activitySeries = [];
+        for ($i = 13; $i >= 0; $i--) {
+            $date = now()->subDays($i)->format('Y-m-d');
+            $row = $rawDailyActivity->get($date);
+            $activitySeries[] = [
+                'date' => $date,
+                'activeLearners' => (int) ($row?->active_learners ?? 0),
+                'lessonsCompleted' => (int) ($row?->lessons_completed ?? 0),
+            ];
+        }
+
         $settings = AppSetting::query()
             ->pluck('value', 'key')
             ->toArray();
@@ -191,6 +255,15 @@ class DashboardController extends Controller
                     ->values(),
                 'coursePerformance' => $coursePerformance,
                 'studentPerformance' => $studentPerformance,
+                'engagement' => [
+                    'weeklyActiveLearners' => $weeklyActiveLearners,
+                    'weeklyLessonsCompleted' => $weeklyLessonsCompleted,
+                    'avgLessonsPerActiveLearner' => $avgLessonsPerActiveLearner,
+                    'activationRate' => $activationRate,
+                    'checkoutConversionRate' => $checkoutConversionRate,
+                    'revenuePerLearner' => $revenuePerLearner,
+                    'activitySeries' => $activitySeries,
+                ],
                 'settings' => [
                     'platformName' => $settings['platform_name'] ?? 'UrSkool',
                     'supportEmail' => $settings['support_email'] ?? 'support@urskool.test',
@@ -198,6 +271,10 @@ class DashboardController extends Controller
                     'maintenanceMode' => ($settings['maintenance_mode'] ?? 'false') === 'true',
                     'allowSelfSignup' => ($settings['allow_self_signup'] ?? 'true') === 'true',
                     'defaultCourseVisibility' => $settings['default_course_visibility'] ?? 'public',
+                    'certificateSchoolName' => $settings['certificate_school_name'] ?? ($settings['platform_name'] ?? 'UrSkool'),
+                    'certificateIssuerTitle' => $settings['certificate_issuer_title'] ?? 'Diretor Executivo',
+                    'certificateIssuerName' => $settings['certificate_issuer_name'] ?? 'Direção Académica',
+                    'certificateSignatureUrl' => $settings['certificate_signature_url'] ?? '',
                 ],
             ],
         ]);

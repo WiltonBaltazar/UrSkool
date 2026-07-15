@@ -18,10 +18,12 @@ const Index = () => {
     queryFn: fetchCategories,
   });
 
-  const { data: courses = [], isLoading, isError } = useQuery({
+  const { data: coursesPage, isLoading, isError } = useQuery({
     queryKey: ["courses", activeCategory, searchQuery],
     queryFn: () => fetchCourses({ category: activeCategory, search: searchQuery }),
   });
+
+  const courses = coursesPage?.data ?? [];
 
   return (
     <div className="min-h-screen bg-background">

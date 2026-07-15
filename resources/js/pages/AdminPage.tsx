@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   BarChart3,
   Bell,
   BookOpen,
   ChevronDown,
   ChevronRight,
-  Clock3,
   Code2,
-  Eye,
   Banknote,
   Edit3,
   FileText,
@@ -19,7 +18,6 @@ import {
   ListChecks,
   LogOut,
   Moon,
-  MousePointerClick,
   Plus,
   Search,
   Save,
@@ -61,7 +59,7 @@ import {
   updateAdminSettings,
 } from "@/lib/api";
 import { formatMzn, toCategoryPt, toEnrollmentStatusPt, toLevelPt } from "@/lib/labels";
-import type { AdminSettings, LessonWorkspaceFile } from "@/lib/types";
+import type { AdminSettings, CodeValidationRule, LessonTextMediaType, LessonWorkspaceFile } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 
@@ -70,6 +68,9 @@ interface AdminLesson {
   title: string;
   duration: string;
   videoUrl: string;
+  textMediaType: LessonTextMediaType;
+  textMediaImageUrl: string;
+  textMediaYoutubeUrl: string;
   language: string;
   content: string;
   starterCode: string;
@@ -78,6 +79,7 @@ interface AdminLesson {
   jsCode: string;
   workspaceFiles: LessonWorkspaceFile[];
   entryHtmlFileId: string;
+  validationRules: CodeValidationRule[];
   quizQuestions: AdminQuizQuestion[];
   quizPassPercentage: number;
   quizRandomizeQuestions: boolean;
@@ -110,6 +112,30 @@ const createEmptyQuizQuestion = (): AdminQuizQuestion => ({
   correctOptionIndex: 0,
 });
 
+const VALIDATION_RULE_KIND_OPTIONS: Array<{ value: CodeValidationRule["kind"]; label: string }> = [
+  { value: "selector_exists", label: "Elemento existe" },
+  { value: "html_includes", label: "HTML inclui" },
+  { value: "css_includes", label: "CSS inclui" },
+  { value: "js_includes", label: "JS inclui" },
+  { value: "text_includes", label: "Texto inclui" },
+];
+
+const createEmptyValidationRule = (): CodeValidationRule => ({
+  kind: "selector_exists",
+  value: "",
+});
+
+const normalizeAdminValidationRules = (rules?: CodeValidationRule[] | null): CodeValidationRule[] => {
+  const source = Array.isArray(rules) ? rules : [];
+
+  return source
+    .map((rule) => ({
+      kind: rule.kind,
+      value: (rule.value || "").trim(),
+    }))
+    .filter((rule) => VALIDATION_RULE_KIND_OPTIONS.some((option) => option.value === rule.kind));
+};
+
 const normalizeAdminQuizQuestions = (questions?: Array<{
   id?: string;
   question?: string | null;
@@ -133,6 +159,25 @@ const normalizeAdminQuizQuestions = (questions?: Array<{
       correctOptionIndex: Math.max(0, Math.min(safeOptions.length - 1, safeIndex)),
     };
   });
+};
+
+const resolveTextMediaType = (lesson: {
+  type?: string | null;
+  textMediaType?: LessonTextMediaType | null;
+  textMediaImageUrl?: string | null;
+  textMediaYoutubeUrl?: string | null;
+  videoUrl?: string | null;
+}): LessonTextMediaType => {
+  if (lesson.type !== "text") return "none";
+
+  if (lesson.textMediaType && ["none", "image", "youtube"].includes(lesson.textMediaType)) {
+    return lesson.textMediaType;
+  }
+
+  if ((lesson.textMediaImageUrl || "").trim() !== "") return "image";
+  if ((lesson.textMediaYoutubeUrl || lesson.videoUrl || "").trim() !== "") return "youtube";
+
+  return "none";
 };
 
 const buildWorkspaceDefaults = (lessonId?: string, htmlCode = "", cssCode = "", jsCode = ""): LessonWorkspaceFile[] => {
@@ -195,6 +240,30 @@ const normalizeEntryHtmlFileId = (workspaceFiles: LessonWorkspaceFile[], entryHt
     || "";
 };
 
+const deriveLegacyCodeFromWorkspace = (workspaceFiles: LessonWorkspaceFile[], entryHtmlFileId?: string): {
+  htmlCode: string;
+  cssCode: string;
+  jsCode: string;
+} => {
+  const entryHtml = workspaceFiles.find((file) => file.id === entryHtmlFileId && file.language === "html")
+    || workspaceFiles.find((file) => file.name.toLowerCase() === "index.html" && file.language === "html")
+    || workspaceFiles.find((file) => file.language === "html");
+  const cssCode = workspaceFiles
+    .filter((file) => file.language === "css")
+    .map((file) => file.content || "")
+    .join("\n\n");
+  const jsCode = workspaceFiles
+    .filter((file) => file.language === "js")
+    .map((file) => file.content || "")
+    .join("\n\n");
+
+  return {
+    htmlCode: entryHtml?.content || "",
+    cssCode,
+    jsCode,
+  };
+};
+
 const createEmptyLesson = (): AdminLesson => {
   const id = crypto.randomUUID();
   const workspaceFiles = buildWorkspaceDefaults(id, "", "", "");
@@ -204,6 +273,9 @@ const createEmptyLesson = (): AdminLesson => {
     title: "Nova lição",
     duration: "05:00",
     videoUrl: "",
+    textMediaType: "none",
+    textMediaImageUrl: "",
+    textMediaYoutubeUrl: "",
     language: "html",
     content: "",
     starterCode: "",
@@ -212,6 +284,7 @@ const createEmptyLesson = (): AdminLesson => {
     jsCode: "",
     workspaceFiles,
     entryHtmlFileId: normalizeEntryHtmlFileId(workspaceFiles),
+    validationRules: [],
     quizQuestions: [createEmptyQuizQuestion()],
     quizPassPercentage: 80,
     quizRandomizeQuestions: true,
@@ -233,6 +306,10 @@ const defaultSettings: AdminSettings = {
   maintenanceMode: false,
   allowSelfSignup: true,
   defaultCourseVisibility: "public",
+  certificateSchoolName: "UrSkool",
+  certificateIssuerTitle: "Diretor Executivo",
+  certificateIssuerName: "Direção Académica",
+  certificateSignatureUrl: "",
 };
 
 const formatDate = (value?: string) => {
@@ -266,12 +343,16 @@ const AdminPage = () => {
   });
 
   const [settingsForm, setSettingsForm] = useState<AdminSettings>(defaultSettings);
+  const [certificateSignatureFile, setCertificateSignatureFile] = useState<File | null>(null);
+  const [removeCertificateSignature, setRemoveCertificateSignature] = useState(false);
   const [courseSearch, setCourseSearch] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
   const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
   const [isPreparingEdit, setIsPreparingEdit] = useState(false);
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Record<string, boolean>>({});
   const [collapsedLessonIds, setCollapsedLessonIds] = useState<Record<string, boolean>>({});
+  const [textMediaImageFiles, setTextMediaImageFiles] = useState<Record<string, File | null>>({});
+  const [removeTextMediaImageByLesson, setRemoveTextMediaImageByLesson] = useState<Record<string, boolean>>({});
 
   const [courseTitle, setCourseTitle] = useState("");
   const [courseSubtitle, setCourseSubtitle] = useState("");
@@ -300,6 +381,8 @@ const AdminPage = () => {
   useEffect(() => {
     if (data?.settings) {
       setSettingsForm(data.settings);
+      setCertificateSignatureFile(null);
+      setRemoveCertificateSignature(false);
     }
   }, [data?.settings]);
 
@@ -333,6 +416,8 @@ const AdminPage = () => {
     setSections([]);
     setCollapsedSectionIds({});
     setCollapsedLessonIds({});
+    setTextMediaImageFiles({});
+    setRemoveTextMediaImageByLesson({});
   };
 
   const createCourseMutation = useMutation({
@@ -399,12 +484,17 @@ const AdminPage = () => {
   });
 
   const saveSettings = useMutation({
-    mutationFn: updateAdminSettings,
+    mutationFn: (payload: AdminSettings) => updateAdminSettings(payload, {
+      certificateSignatureFile,
+      removeCertificateSignature,
+    }),
     onSuccess: () => {
       toast({
         title: "Definições atualizadas",
         description: "As definições da plataforma foram guardadas com sucesso.",
       });
+      setCertificateSignatureFile(null);
+      setRemoveCertificateSignature(false);
       queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] });
     },
     onError: (error: Error) => {
@@ -491,6 +581,20 @@ const AdminPage = () => {
         });
         return next;
       });
+      setTextMediaImageFiles((prev) => {
+        const next = { ...prev };
+        lessonIds.forEach((id) => {
+          delete next[id];
+        });
+        return next;
+      });
+      setRemoveTextMediaImageByLesson((prev) => {
+        const next = { ...prev };
+        lessonIds.forEach((id) => {
+          delete next[id];
+        });
+        return next;
+      });
     }
   };
 
@@ -506,6 +610,16 @@ const AdminPage = () => {
       ),
     );
     setCollapsedLessonIds((prev) => {
+      const next = { ...prev };
+      delete next[lessonId];
+      return next;
+    });
+    setTextMediaImageFiles((prev) => {
+      const next = { ...prev };
+      delete next[lessonId];
+      return next;
+    });
+    setRemoveTextMediaImageByLesson((prev) => {
       const next = { ...prev };
       delete next[lessonId];
       return next;
@@ -559,6 +673,9 @@ const AdminPage = () => {
             title: lesson.title,
             duration: lesson.duration || "",
             videoUrl: lesson.videoUrl || "",
+            textMediaType: resolveTextMediaType(lesson),
+            textMediaImageUrl: lesson.textMediaImageUrl || "",
+            textMediaYoutubeUrl: lesson.textMediaYoutubeUrl || (lesson.type === "text" ? lesson.videoUrl || "" : ""),
             language: lesson.language || "html",
             content: lesson.content || "",
             starterCode: lesson.starterCode || "",
@@ -590,6 +707,7 @@ const AdminPage = () => {
               ),
               lesson.entryHtmlFileId,
             ),
+            validationRules: normalizeAdminValidationRules(lesson.validationRules),
             quizQuestions: normalizeAdminQuizQuestions(lesson.quizQuestions),
             quizPassPercentage: clampQuizPassPercentage(Number(lesson.quizPassPercentage ?? 80)),
             quizRandomizeQuestions: lesson.quizRandomizeQuestions ?? true,
@@ -598,6 +716,8 @@ const AdminPage = () => {
           })),
         })),
       );
+      setTextMediaImageFiles({});
+      setRemoveTextMediaImageByLesson({});
       setCollapsedSectionIds({});
       setCollapsedLessonIds({});
       setActiveTab("create");
@@ -628,35 +748,73 @@ const AdminPage = () => {
     description: courseDescription,
     sections: sections.map((section) => ({
       title: section.title,
-      lessons: section.lessons.map((lesson) => ({
-        title: lesson.title,
-        duration: lesson.duration,
-        videoUrl: lesson.videoUrl || undefined,
-        language: lesson.language || undefined,
-        content: lesson.content || undefined,
-        starterCode: lesson.starterCode || undefined,
-        htmlCode: lesson.htmlCode || undefined,
-        cssCode: lesson.cssCode || undefined,
-        jsCode: lesson.jsCode || undefined,
-        workspaceFiles: lesson.type === "code" || lesson.type === "project"
-          ? lesson.workspaceFiles
-          : undefined,
-        entryHtmlFileId: lesson.type === "code" || lesson.type === "project"
-          ? (lesson.entryHtmlFileId || undefined)
-          : undefined,
-        quizQuestions: lesson.type === "quiz"
-          ? lesson.quizQuestions.map((question) => ({
-            id: question.id,
-            question: question.question,
-            options: question.options,
-            correctOptionIndex: question.correctOptionIndex,
-          }))
-          : undefined,
-        quizPassPercentage: lesson.type === "quiz" ? clampQuizPassPercentage(lesson.quizPassPercentage) : undefined,
-        quizRandomizeQuestions: lesson.type === "quiz" ? lesson.quizRandomizeQuestions : undefined,
-        isFree: lesson.isFree,
-        type: lesson.type,
-      })),
+      lessons: section.lessons.map((lesson) => {
+        const canHaveWorkspace = lesson.type === "code" || lesson.type === "project";
+        const workspaceFiles = canHaveWorkspace
+          ? normalizeAdminWorkspaceFiles(
+            lesson.workspaceFiles,
+            lesson.id,
+            lesson.htmlCode,
+            lesson.cssCode,
+            lesson.jsCode,
+          )
+          : [];
+        const entryHtmlFileId = canHaveWorkspace
+          ? normalizeEntryHtmlFileId(workspaceFiles, lesson.entryHtmlFileId)
+          : "";
+        const legacyCode = canHaveWorkspace
+          ? deriveLegacyCodeFromWorkspace(workspaceFiles, entryHtmlFileId)
+          : {
+            htmlCode: lesson.htmlCode || "",
+            cssCode: lesson.cssCode || "",
+            jsCode: lesson.jsCode || "",
+          };
+
+        return {
+          title: lesson.title,
+          duration: lesson.duration,
+          videoUrl: lesson.type === "text"
+            ? (lesson.textMediaType === "youtube" ? (lesson.textMediaYoutubeUrl || undefined) : undefined)
+            : lesson.videoUrl || undefined,
+          textMediaType: lesson.type === "text" ? lesson.textMediaType : undefined,
+          textMediaImageUrl: lesson.type === "text" ? (lesson.textMediaImageUrl || undefined) : undefined,
+          textMediaImageFile: lesson.type === "text" ? (textMediaImageFiles[lesson.id] || undefined) : undefined,
+          removeTextMediaImage: lesson.type === "text"
+            ? Boolean(removeTextMediaImageByLesson[lesson.id])
+            : undefined,
+          textMediaYoutubeUrl: lesson.type === "text"
+            ? (lesson.textMediaYoutubeUrl || undefined)
+            : undefined,
+          language: lesson.language || undefined,
+          content: lesson.content || undefined,
+          starterCode: lesson.starterCode || undefined,
+          htmlCode: legacyCode.htmlCode || undefined,
+          cssCode: legacyCode.cssCode || undefined,
+          jsCode: legacyCode.jsCode || undefined,
+          workspaceFiles: canHaveWorkspace ? workspaceFiles : undefined,
+          entryHtmlFileId: canHaveWorkspace ? (entryHtmlFileId || undefined) : undefined,
+          validationRules: canHaveWorkspace
+            ? lesson.validationRules
+              .map((rule) => ({
+                kind: rule.kind,
+                value: rule.value.trim(),
+              }))
+              .filter((rule) => rule.value.length > 0)
+            : undefined,
+          quizQuestions: lesson.type === "quiz"
+            ? lesson.quizQuestions.map((question) => ({
+              id: question.id,
+              question: question.question,
+              options: question.options,
+              correctOptionIndex: question.correctOptionIndex,
+            }))
+            : undefined,
+          quizPassPercentage: lesson.type === "quiz" ? clampQuizPassPercentage(lesson.quizPassPercentage) : undefined,
+          quizRandomizeQuestions: lesson.type === "quiz" ? lesson.quizRandomizeQuestions : undefined,
+          isFree: lesson.isFree,
+          type: lesson.type,
+        };
+      }),
     })),
   };
 
@@ -701,70 +859,16 @@ const AdminPage = () => {
     Math.round(((data.stats.totalRevenue / revenueTarget) * 100)),
   );
   const isOverviewTab = activeTab === "overview";
-  const analyticsTraffic = Array.from({ length: 25 }, (_item, index) => {
-    const perf = data.coursePerformance[index % Math.max(1, data.coursePerformance.length)];
-    const baseValue = perf
-      ? perf.enrollments * 8 + perf.activeStudents * 5 + Math.round(perf.completionRate)
-      : 120 + (index * 37) % 210;
-    return Math.max(60, Math.min(390, baseValue));
-  });
-  const maxTraffic = Math.max(...analyticsTraffic, 1);
-  const uniqueVisitors = Math.max(1, Math.round(data.stats.totalUsers * 6.2));
-  const totalPageviews = analyticsTraffic.reduce((acc, value) => acc + value, 0);
-  const bounceRate = Math.max(
-    20,
-    Math.min(
-      75,
-      Math.round(
-        100
-        - data.studentPerformance.reduce((acc, student) => acc + student.completionRate, 0)
-          / Math.max(1, data.studentPerformance.length),
-      ),
-    ),
-  );
-  const visitDurationSeconds = Math.max(
-    65,
-    Math.round(
-      data.coursePerformance.reduce((acc, course) => acc + course.averageQuizScore, 0)
-      / Math.max(1, data.coursePerformance.length) + 95,
-    ),
-  );
-  const topChannels = data.categories.slice(0, 5).map((category) => ({
-    name: category.name,
-    visitors: Math.max(100, Math.round((category.count / Math.max(1, data.stats.totalCourses)) * uniqueVisitors)),
-  }));
-  const topPages = data.courses.slice(0, 5).map((course) => ({
-    name: course.title,
-    views: Math.max(100, Math.round((course.studentCount + 1) * 18)),
-  }));
   const courseCategoryById = new Map(data.courses.map((course) => [course.id, toCategoryPt(course.category)]));
-  const sparklineTraffic = analyticsTraffic.slice(0, 12);
-  const sparklineMax = Math.max(...sparklineTraffic, 1);
-  const sparklinePoints = sparklineTraffic
-    .map((value, index) => {
-      const x = (index / Math.max(1, sparklineTraffic.length - 1)) * 100;
-      const y = 92 - (value / sparklineMax) * 74;
+  const eng = data.engagement;
+  const activityMax = Math.max(...eng.activitySeries.map((d) => d.activeLearners), 1);
+  const activitySparkPoints = eng.activitySeries
+    .map((d, i) => {
+      const x = (i / Math.max(1, eng.activitySeries.length - 1)) * 100;
+      const y = 92 - (d.activeLearners / activityMax) * 74;
       return `${x},${y}`;
     })
     .join(" ");
-  const acquisitionMonths = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul"];
-  const acquisitionSeries = acquisitionMonths.map((month, index) => {
-    const anchor = analyticsTraffic[index] ?? 120;
-    const direct = 28 + (anchor % 30);
-    const referral = 12 + ((anchor * 2) % 20);
-    const organic = 10 + ((anchor * 3) % 17);
-    const social = 8 + ((anchor * 4) % 14);
-    return { month, direct, referral, organic, social };
-  });
-  const maxAcquisition = Math.max(
-    ...acquisitionSeries.map((entry) => entry.direct + entry.referral + entry.organic + entry.social),
-    1,
-  );
-  const deviceStats = [
-    { name: "Desktop", value: 48 },
-    { name: "Mobile", value: 37 },
-    { name: "Tablet", value: 15 },
-  ];
   const recentEnrollments = data.enrollments.slice(0, 7);
 
   return (
@@ -1166,73 +1270,61 @@ const AdminPage = () => {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <Card className="border-border">
                 <CardHeader className="pb-2">
-                  <CardDescription>Visitantes Únicos</CardDescription>
+                  <CardDescription>Aprendentes Activos (7 dias)</CardDescription>
                   <CardTitle className="flex items-center gap-2 text-2xl">
-                    <MousePointerClick className="h-5 w-5 text-foreground" />
-                    {`${(uniqueVisitors / 1000).toFixed(1)}K`}
+                    <Users className="h-5 w-5 text-foreground" />
+                    {eng.weeklyActiveLearners}
                   </CardTitle>
                 </CardHeader>
               </Card>
               <Card className="border-border">
                 <CardHeader className="pb-2">
-                  <CardDescription>Total Pageviews</CardDescription>
-                  <CardTitle className="flex items-center gap-2 text-2xl">
-                    <Eye className="h-5 w-5 text-foreground" />
-                    {`${(totalPageviews / 1000).toFixed(1)}K`}
-                  </CardTitle>
-                </CardHeader>
-              </Card>
-              <Card className="border-border">
-                <CardHeader className="pb-2">
-                  <CardDescription>Bounce Rate</CardDescription>
+                  <CardDescription>Taxa de Activação (30 dias)</CardDescription>
                   <CardTitle className="flex items-center gap-2 text-2xl">
                     <Activity className="h-5 w-5 text-foreground" />
-                    {`${bounceRate}%`}
+                    {`${eng.activationRate}%`}
                   </CardTitle>
                 </CardHeader>
               </Card>
               <Card className="border-border">
                 <CardHeader className="pb-2">
-                  <CardDescription>Visit Duration</CardDescription>
+                  <CardDescription>Lições/Aprendente/Semana</CardDescription>
                   <CardTitle className="flex items-center gap-2 text-2xl">
-                    <Clock3 className="h-5 w-5 text-foreground" />
-                    {`${Math.floor(visitDurationSeconds / 60)}m ${String(visitDurationSeconds % 60).padStart(2, "0")}s`}
+                    <BookOpen className="h-5 w-5 text-foreground" />
+                    {eng.avgLessonsPerActiveLearner}
+                  </CardTitle>
+                </CardHeader>
+              </Card>
+              <Card className="border-border">
+                <CardHeader className="pb-2">
+                  <CardDescription>Conversão de Matrículas</CardDescription>
+                  <CardTitle className="flex items-center gap-2 text-2xl">
+                    <BarChart3 className="h-5 w-5 text-foreground" />
+                    {`${eng.checkoutConversionRate}%`}
                   </CardTitle>
                 </CardHeader>
               </Card>
             </div>
 
             <Card className="border-border">
-              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <CardTitle className="font-display text-xl">Analytics</CardTitle>
-                  <CardDescription>Visitor analytics dos últimos 30 dias.</CardDescription>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" className="border-border bg-background">12 meses</Button>
-                  <Button variant="outline" size="sm" className="border-border bg-background">30 dias</Button>
-                  <Button variant="outline" size="sm" className="border-border bg-background">7 dias</Button>
-                  <Button variant="outline" size="sm" className="border-border bg-background">24 horas</Button>
-                </div>
+              <CardHeader>
+                <CardTitle className="font-display text-xl">Actividade dos Últimos 14 Dias</CardTitle>
+                <CardDescription>Aprendentes activos por dia.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-4 text-xs text-muted-foreground">
-                  <span>0</span>
-                  <span className="text-center">100</span>
-                  <span className="text-center">250</span>
-                  <span className="text-right">400</span>
-                </div>
                 <div className="overflow-x-auto">
-                  <div className="flex min-w-[900px] items-end gap-2 pb-3">
-                    {analyticsTraffic.map((value, index) => (
-                      <div key={`analytics-${index}`} className="flex w-8 flex-col items-center gap-2">
-                        <div className="flex h-64 w-full items-end rounded-md bg-muted/40 px-1">
+                  <div className="flex min-w-[560px] items-end gap-1.5 pb-3 pt-2">
+                    {eng.activitySeries.map((day) => (
+                      <div key={day.date} className="flex flex-1 flex-col items-center gap-1.5">
+                        <div className="flex h-48 w-full items-end rounded-md bg-muted/40 px-1">
                           <div
-                            className="w-full rounded-sm bg-foreground"
-                            style={{ height: `${Math.max(8, (value / maxTraffic) * 100)}%` }}
+                            className="w-full rounded-sm bg-foreground transition-all"
+                            style={{ height: `${Math.max(4, (day.activeLearners / activityMax) * 100)}%` }}
                           />
                         </div>
-                        <span className="text-[10px] text-muted-foreground">{index + 1}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(day.date + "T00:00:00").toLocaleDateString("pt", { day: "numeric", month: "numeric" })}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -1243,142 +1335,37 @@ const AdminPage = () => {
             <div className="grid gap-6 xl:grid-cols-3">
               <Card className="border-border">
                 <CardHeader>
-                  <CardTitle className="font-display text-lg">Top Channels</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {topChannels.map((channel) => (
-                    <div key={channel.name} className="flex items-center justify-between border-b border-border pb-2 last:border-0 last:pb-0">
-                      <span className="text-sm text-foreground">{channel.name}</span>
-                      <span className="text-sm font-semibold text-foreground">{`${(channel.visitors / 1000).toFixed(1)}K`}</span>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card className="border-border">
-                <CardHeader>
-                  <CardTitle className="font-display text-lg">Top Pages</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {topPages.map((page) => (
-                    <div key={page.name} className="flex items-center justify-between border-b border-border pb-2 last:border-0 last:pb-0">
-                      <span className="max-w-[210px] truncate text-sm text-foreground">{page.name}</span>
-                      <span className="text-sm font-semibold text-foreground">{`${(page.views / 1000).toFixed(1)}K`}</span>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card className="border-border">
-                <CardHeader>
-                  <CardTitle className="font-display text-lg">Active Users</CardTitle>
+                  <CardTitle className="font-display text-lg">Lições Concluídas (7 dias)</CardTitle>
                   <CardDescription>
-                    <span className="mr-1 text-3xl font-semibold text-foreground">{Math.round(uniqueVisitors / 11)}</span>
-                    Live visitors
+                    <span className="mr-1 text-3xl font-semibold text-foreground">{eng.weeklyLessonsCompleted}</span>
+                    conclusões
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="h-36 rounded-lg border border-border bg-muted/20 p-3">
                     <svg viewBox="0 0 100 100" className="h-full w-full" preserveAspectRatio="none">
                       <polyline
-                        points={sparklinePoints}
+                        points={activitySparkPoints}
                         fill="none"
                         stroke="hsl(var(--foreground))"
                         strokeWidth="2.2"
                       />
                     </svg>
                   </div>
-                  <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs">
                     <div>
-                      <p className="text-lg font-semibold text-foreground">{Math.round(uniqueVisitors / 30)}</p>
-                      <p className="text-muted-foreground">Avg. Daily</p>
+                      <p className="text-lg font-semibold text-foreground">{eng.weeklyActiveLearners}</p>
+                      <p className="text-muted-foreground">Activos / semana</p>
                     </div>
                     <div>
-                      <p className="text-lg font-semibold text-foreground">{`${(uniqueVisitors / 18).toFixed(1)}K`}</p>
-                      <p className="text-muted-foreground">Avg. Weekly</p>
+                      <p className="text-lg font-semibold text-foreground">{formatMzn(eng.revenuePerLearner)}</p>
+                      <p className="text-muted-foreground">Receita / aprendente</p>
                     </div>
-                    <div>
-                      <p className="text-lg font-semibold text-foreground">{`${(uniqueVisitors / 10).toFixed(1)}K`}</p>
-                      <p className="text-muted-foreground">Avg. Monthly</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="grid gap-6 xl:grid-cols-3">
-              <Card className="border-border xl:col-span-2">
-                <CardHeader>
-                  <CardTitle className="font-display text-lg">Acquisition Channels</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="mb-4 flex flex-wrap gap-4 text-xs text-muted-foreground">
-                    <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-foreground" />Direct</span>
-                    <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-muted-foreground" />Referral</span>
-                    <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-muted" />Organic</span>
-                    <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full border border-border bg-background" />Social</span>
-                  </div>
-                  <div className="grid grid-cols-7 gap-3">
-                    {acquisitionSeries.map((entry) => {
-                      const total = entry.direct + entry.referral + entry.organic + entry.social;
-                      return (
-                        <div key={entry.month} className="space-y-2">
-                          <div className="flex h-44 flex-col justify-end overflow-hidden rounded-lg border border-border bg-muted/20 p-1">
-                            <div
-                              className="w-full bg-foreground"
-                              style={{ height: `${Math.max(5, (entry.direct / maxAcquisition) * 100)}%` }}
-                            />
-                            <div
-                              className="w-full bg-muted-foreground"
-                              style={{ height: `${Math.max(5, (entry.referral / maxAcquisition) * 100)}%` }}
-                            />
-                            <div
-                              className="w-full bg-muted"
-                              style={{ height: `${Math.max(5, (entry.organic / maxAcquisition) * 100)}%` }}
-                            />
-                            <div
-                              className="w-full border-t border-border bg-background"
-                              style={{ height: `${Math.max(4, (entry.social / maxAcquisition) * 100)}%` }}
-                            />
-                          </div>
-                          <div className="text-center">
-                            <p className="text-xs text-muted-foreground">{entry.month}</p>
-                            <p className="text-[10px] text-foreground">{total}</p>
-                          </div>
-                        </div>
-                      );
-                    })}
                   </div>
                 </CardContent>
               </Card>
 
               <Card className="border-border">
-                <CardHeader>
-                  <CardTitle className="font-display text-lg">Sessions By Device</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="mx-auto h-48 w-48 rounded-full" style={{ background: "conic-gradient(hsl(var(--foreground)) 0% 48%, hsl(var(--muted-foreground)) 48% 85%, hsl(var(--border)) 85% 100%)" }}>
-                    <div className="mx-auto mt-8 h-32 w-32 rounded-full border border-border bg-card" />
-                  </div>
-                  <div className="mt-5 space-y-3">
-                    {deviceStats.map((device) => (
-                      <div key={device.name} className="space-y-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">{device.name}</span>
-                          <span className="font-semibold text-foreground">{`${device.value}%`}</span>
-                        </div>
-                        <div className="h-2 rounded-full bg-muted">
-                          <div className="h-2 rounded-full bg-foreground" style={{ width: `${device.value}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="grid gap-6 xl:grid-cols-5">
-              <Card className="border-border xl:col-span-2">
                 <CardHeader>
                   <CardTitle className="font-display text-lg">Distribuição de Categorias</CardTitle>
                 </CardHeader>
@@ -1400,36 +1387,68 @@ const AdminPage = () => {
                 </CardContent>
               </Card>
 
-              <Card className="border-border xl:col-span-3">
+              <Card className="border-border">
                 <CardHeader>
-                  <CardTitle className="font-display text-lg">Recent Orders</CardTitle>
+                  <CardTitle className="font-display text-lg">Métricas de Receita</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Produto</TableHead>
-                        <TableHead>Categoria</TableHead>
-                        <TableHead>Estado</TableHead>
-                        <TableHead className="text-right">Valor</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {recentEnrollments.map((enrollment) => (
-                        <TableRow key={enrollment.id}>
-                          <TableCell>{enrollment.courseTitle}</TableCell>
-                          <TableCell>{courseCategoryById.get(enrollment.courseId) ?? "N/A"}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{toEnrollmentStatusPt(enrollment.status)}</Badge>
-                          </TableCell>
-                          <TableCell className="text-right">{formatMzn(enrollment.amount)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <CardContent className="space-y-4">
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Receita Total</p>
+                    <p className="text-2xl font-semibold text-foreground">{formatMzn(data.stats.totalRevenue)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Receita por Aprendente</p>
+                    <p className="text-2xl font-semibold text-foreground">{formatMzn(eng.revenuePerLearner)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">Total de Matrículas</p>
+                    <p className="text-2xl font-semibold text-foreground">{data.stats.totalEnrollments}</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Conversão</span>
+                      <span className="font-semibold text-foreground">{`${eng.checkoutConversionRate}%`}</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted">
+                      <div
+                        className="h-2 rounded-full bg-foreground"
+                        style={{ width: `${Math.min(100, eng.checkoutConversionRate)}%` }}
+                      />
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
+
+            <Card className="border-border">
+              <CardHeader>
+                <CardTitle className="font-display text-lg">Matrículas Recentes</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Produto</TableHead>
+                      <TableHead>Categoria</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">Valor</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {recentEnrollments.map((enrollment) => (
+                      <TableRow key={enrollment.id}>
+                        <TableCell>{enrollment.courseTitle}</TableCell>
+                        <TableCell>{courseCategoryById.get(enrollment.courseId) ?? "N/A"}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{toEnrollmentStatusPt(enrollment.status)}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">{formatMzn(enrollment.amount)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="courses">
@@ -1633,6 +1652,83 @@ const AdminPage = () => {
                       }
                     />
                   </div>
+                  <div className="space-y-1">
+                    <Label>Nome da Escola (Certificado)</Label>
+                    <Input
+                      value={settingsForm.certificateSchoolName}
+                      onChange={(event) =>
+                        setSettingsForm((prev) => ({
+                          ...prev,
+                          certificateSchoolName: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Nome do Assinante</Label>
+                    <Input
+                      value={settingsForm.certificateIssuerName}
+                      onChange={(event) =>
+                        setSettingsForm((prev) => ({
+                          ...prev,
+                          certificateIssuerName: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Cargo do Assinante</Label>
+                    <Input
+                      value={settingsForm.certificateIssuerTitle}
+                      onChange={(event) =>
+                        setSettingsForm((prev) => ({
+                          ...prev,
+                          certificateIssuerTitle: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2 rounded-lg border border-border p-3">
+                  <Label>Assinatura (imagem)</Label>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] || null;
+                      setCertificateSignatureFile(file);
+                      if (file) {
+                        setRemoveCertificateSignature(false);
+                      }
+                    }}
+                  />
+                  {certificateSignatureFile && (
+                    <p className="text-xs text-muted-foreground">
+                      Nova assinatura selecionada: {certificateSignatureFile.name}
+                    </p>
+                  )}
+                  {settingsForm.certificateSignatureUrl && !removeCertificateSignature && !certificateSignatureFile && (
+                    <img
+                      src={settingsForm.certificateSignatureUrl}
+                      alt="Assinatura atual"
+                      className="h-14 w-auto max-w-full object-contain rounded border border-border bg-surface-sunken p-1"
+                    />
+                  )}
+                  {(settingsForm.certificateSignatureUrl || certificateSignatureFile) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => {
+                        setCertificateSignatureFile(null);
+                        setRemoveCertificateSignature(true);
+                      }}
+                    >
+                      Remover assinatura
+                    </Button>
+                  )}
                 </div>
 
                 <div className="space-y-3">
@@ -1930,7 +2026,7 @@ const AdminPage = () => {
                                       <Video className="h-4 w-4 text-accent shrink-0" />
                                     ) : lesson.type === "quiz" ? (
                                       <ListChecks className="h-4 w-4 text-accent shrink-0" />
-                                    ) : lesson.type === "code" ? (
+                                    ) : (lesson.type === "code" || lesson.type === "project") ? (
                                       <Code2 className="h-4 w-4 text-accent shrink-0" />
                                     ) : (
                                       <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -1971,28 +2067,52 @@ const AdminPage = () => {
                                   </Badge>
                                   <select
                                     value={lesson.type}
-                                    onChange={(event) =>
+                                    onChange={(event) => {
+                                      const nextType = event.target.value as AdminLesson["type"];
+
+                                      if (nextType !== "text") {
+                                        setTextMediaImageFiles((prev) => {
+                                          const next = { ...prev };
+                                          delete next[lesson.id];
+                                          return next;
+                                        });
+                                        setRemoveTextMediaImageByLesson((prev) => {
+                                          const next = { ...prev };
+                                          delete next[lesson.id];
+                                          return next;
+                                        });
+                                      }
+
                                       updateLesson(section.id, lesson.id, (item) => {
-                                        const nextType = event.target.value as AdminLesson["type"];
-                                        if (nextType !== "quiz") {
+                                        if (nextType === "quiz") {
                                           return {
                                             ...item,
-                                            type: nextType,
+                                            type: "quiz",
+                                            quizQuestions:
+                                              item.quizQuestions.length > 0
+                                                ? item.quizQuestions
+                                                : [createEmptyQuizQuestion()],
+                                            quizPassPercentage: clampQuizPassPercentage(item.quizPassPercentage),
+                                            quizRandomizeQuestions: item.quizRandomizeQuestions ?? true,
+                                          };
+                                        }
+
+                                        if (nextType === "text") {
+                                          const inferredType = resolveTextMediaType(item);
+                                          return {
+                                            ...item,
+                                            type: "text",
+                                            textMediaType: inferredType,
+                                            textMediaYoutubeUrl: item.textMediaYoutubeUrl || item.videoUrl || "",
                                           };
                                         }
 
                                         return {
                                           ...item,
-                                          type: "quiz",
-                                          quizQuestions:
-                                            item.quizQuestions.length > 0
-                                              ? item.quizQuestions
-                                              : [createEmptyQuizQuestion()],
-                                          quizPassPercentage: clampQuizPassPercentage(item.quizPassPercentage),
-                                          quizRandomizeQuestions: item.quizRandomizeQuestions ?? true,
+                                          type: nextType,
                                         };
-                                      })
-                                    }
+                                      });
+                                    }}
                                     className="col-span-2 h-8 rounded-md border border-input bg-background px-2 text-xs"
                                   >
                                     <option value="code">código</option>
@@ -2011,21 +2131,30 @@ const AdminPage = () => {
                                   </Button>
                                 </div>
 
+                                {(lesson.type === "code" || lesson.type === "project") && lesson.validationRules.length === 0 && (
+                                  <div className="flex justify-end">
+                                    <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300 bg-amber-50">
+                                      <AlertTriangle className="mr-1 h-3 w-3" />
+                                      Sem regras manuais (usa fallback automático)
+                                    </Badge>
+                                  </div>
+                                )}
+
                                 {!collapsedLessonIds[lesson.id] && (
                                   <>
-                                    <div className="grid md:grid-cols-2 gap-2">
-                                      <Input
-                                        value={lesson.videoUrl}
-                                        onChange={(event) =>
-                                          updateLesson(section.id, lesson.id, (item) => ({
-                                            ...item,
-                                            videoUrl: event.target.value,
-                                          }))
-                                        }
-                                        placeholder="URL do vídeo (YouTube, Vimeo, MP4...)"
-                                        className="font-body text-xs"
-                                      />
-                                      {lesson.type !== "code" && lesson.type !== "quiz" && (
+                                    {lesson.type === "video" && (
+                                      <div className="grid md:grid-cols-2 gap-2">
+                                        <Input
+                                          value={lesson.videoUrl}
+                                          onChange={(event) =>
+                                            updateLesson(section.id, lesson.id, (item) => ({
+                                              ...item,
+                                              videoUrl: event.target.value,
+                                            }))
+                                          }
+                                          placeholder="URL do vídeo (YouTube, Vimeo, MP4...)"
+                                          className="font-body text-xs"
+                                        />
                                         <Input
                                           value={lesson.language}
                                           onChange={(event) =>
@@ -2034,11 +2163,131 @@ const AdminPage = () => {
                                               language: event.target.value,
                                             }))
                                           }
-                                          placeholder="Linguagem (html, js, php...)"
+                                          placeholder="Linguagem (opcional)"
                                           className="font-body text-xs"
                                         />
-                                      )}
-                                    </div>
+                                      </div>
+                                    )}
+
+                                    {lesson.type === "text" && (
+                                      <div className="space-y-3 rounded-md border border-border bg-surface-sunken p-3">
+                                        <div className="grid gap-2 md:grid-cols-2 md:items-center">
+                                          <div>
+                                            <p className="text-xs font-medium text-foreground">Mídia do lado direito</p>
+                                            <p className="text-[11px] text-muted-foreground">
+                                              Escolhe se a aula teórica mostra imagem, vídeo YouTube ou apenas o painel visual.
+                                            </p>
+                                          </div>
+                                          <select
+                                            value={lesson.textMediaType}
+                                            onChange={(event) => {
+                                              const nextType = event.target.value as LessonTextMediaType;
+                                              updateLesson(section.id, lesson.id, (item) => ({
+                                                ...item,
+                                                textMediaType: nextType,
+                                              }));
+                                            }}
+                                            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                                          >
+                                            <option value="none">Sem mídia</option>
+                                            <option value="image">Imagem</option>
+                                            <option value="youtube">Vídeo YouTube</option>
+                                          </select>
+                                        </div>
+
+                                        {lesson.textMediaType === "youtube" && (
+                                          <Input
+                                            value={lesson.textMediaYoutubeUrl}
+                                            onChange={(event) =>
+                                              updateLesson(section.id, lesson.id, (item) => ({
+                                                ...item,
+                                                textMediaYoutubeUrl: event.target.value,
+                                              }))
+                                            }
+                                            placeholder="URL do YouTube (ex: https://www.youtube.com/watch?v=...)"
+                                            className="font-body text-xs"
+                                          />
+                                        )}
+
+                                        {lesson.textMediaType === "image" && (
+                                          <div className="space-y-2">
+                                            <Input
+                                              type="file"
+                                              accept="image/*"
+                                              onChange={(event) => {
+                                                const nextFile = event.target.files?.[0] || null;
+                                                setTextMediaImageFiles((prev) => ({
+                                                  ...prev,
+                                                  [lesson.id]: nextFile,
+                                                }));
+                                                setRemoveTextMediaImageByLesson((prev) => ({
+                                                  ...prev,
+                                                  [lesson.id]: false,
+                                                }));
+                                              }}
+                                              className="font-body text-xs"
+                                            />
+
+                                            {(textMediaImageFiles[lesson.id] || lesson.textMediaImageUrl) && (
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                {textMediaImageFiles[lesson.id] ? (
+                                                  <p className="text-[11px] text-muted-foreground">
+                                                    Nova imagem selecionada: {textMediaImageFiles[lesson.id]?.name}
+                                                  </p>
+                                                ) : removeTextMediaImageByLesson[lesson.id] ? (
+                                                  <p className="text-[11px] text-amber-700">A imagem atual será removida ao guardar.</p>
+                                                ) : (
+                                                  <a
+                                                    href={lesson.textMediaImageUrl}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="text-[11px] text-accent hover:underline"
+                                                  >
+                                                    Ver imagem atual
+                                                  </a>
+                                                )}
+
+                                                <Button
+                                                  type="button"
+                                                  variant="outline"
+                                                  size="sm"
+                                                  className="h-7 text-[11px]"
+                                                  onClick={() => {
+                                                    setTextMediaImageFiles((prev) => ({
+                                                      ...prev,
+                                                      [lesson.id]: null,
+                                                    }));
+                                                    setRemoveTextMediaImageByLesson((prev) => ({
+                                                      ...prev,
+                                                      [lesson.id]: true,
+                                                    }));
+                                                  }}
+                                                >
+                                                  Remover imagem
+                                                </Button>
+
+                                                {removeTextMediaImageByLesson[lesson.id] && (
+                                                  <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-7 text-[11px]"
+                                                    onClick={() =>
+                                                      setRemoveTextMediaImageByLesson((prev) => ({
+                                                        ...prev,
+                                                        [lesson.id]: false,
+                                                      }))
+                                                    }
+                                                  >
+                                                    Manter imagem
+                                                  </Button>
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
 
                                     <RichTextEditor
                                       value={lesson.content}
@@ -2051,7 +2300,7 @@ const AdminPage = () => {
                                       placeholder="Instruções da lição / desafio"
                                     />
 
-                                    {lesson.type === "code" && (
+                                    {(lesson.type === "code" || lesson.type === "project") && (
                                       <div className="grid grid-cols-1 gap-2">
                                         <div className="space-y-1">
                                           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -2101,6 +2350,102 @@ const AdminPage = () => {
                                             }
                                             placeholder="JavaScript"
                                           />
+                                        </div>
+
+                                        <div className="rounded-md border border-border bg-surface-sunken p-3 space-y-3">
+                                          <div className="flex items-center justify-between gap-2">
+                                            <div>
+                                              <p className="text-xs font-medium">Regras de validação</p>
+                                              <p className="text-[11px] text-muted-foreground">
+                                                Estas regras são usadas no servidor para validar a prática.
+                                              </p>
+                                            </div>
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="outline"
+                                              className="h-7 text-[11px]"
+                                              onClick={() =>
+                                                updateLesson(section.id, lesson.id, (item) => ({
+                                                  ...item,
+                                                  validationRules: [...item.validationRules, createEmptyValidationRule()],
+                                                }))
+                                              }
+                                            >
+                                              <Plus className="mr-1 h-3.5 w-3.5" />
+                                              Adicionar regra
+                                            </Button>
+                                          </div>
+
+                                          <div className="space-y-2">
+                                            {lesson.validationRules.length === 0 ? (
+                                              <p className="text-[11px] text-muted-foreground">
+                                                Sem regras manuais. O sistema tenta gerar regras a partir do código base.
+                                              </p>
+                                            ) : lesson.validationRules.map((rule, ruleIndex) => (
+                                              <div
+                                                key={`${lesson.id}-rule-${ruleIndex}`}
+                                                className="grid gap-2 md:grid-cols-[190px_1fr_auto] md:items-center"
+                                              >
+                                                <select
+                                                  className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                                                  value={rule.kind}
+                                                  onChange={(event) =>
+                                                    updateLesson(section.id, lesson.id, (item) => ({
+                                                      ...item,
+                                                      validationRules: item.validationRules.map((candidate, candidateIndex) => (
+                                                        candidateIndex === ruleIndex
+                                                          ? {
+                                                            ...candidate,
+                                                            kind: event.target.value as CodeValidationRule["kind"],
+                                                          }
+                                                          : candidate
+                                                      )),
+                                                    }))
+                                                  }
+                                                >
+                                                  {VALIDATION_RULE_KIND_OPTIONS.map((option) => (
+                                                    <option key={option.value} value={option.value}>
+                                                      {option.label}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                                <Input
+                                                  value={rule.value}
+                                                  onChange={(event) =>
+                                                    updateLesson(section.id, lesson.id, (item) => ({
+                                                      ...item,
+                                                      validationRules: item.validationRules.map((candidate, candidateIndex) => (
+                                                        candidateIndex === ruleIndex
+                                                          ? { ...candidate, value: event.target.value }
+                                                          : candidate
+                                                      )),
+                                                    }))
+                                                  }
+                                                  placeholder="Ex: #cta, .card, <button, addEventListener"
+                                                  className="font-body text-xs"
+                                                />
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  size="icon"
+                                                  disabled={lesson.validationRules.length <= 1}
+                                                  onClick={() =>
+                                                    updateLesson(section.id, lesson.id, (item) => ({
+                                                      ...item,
+                                                      validationRules: item.validationRules.filter(
+                                                        (_candidate, candidateIndex) => candidateIndex !== ruleIndex,
+                                                      ),
+                                                    }))
+                                                  }
+                                                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                                  title="Eliminar regra"
+                                                >
+                                                  <Trash2 className="h-3.5 w-3.5" />
+                                                </Button>
+                                              </div>
+                                            ))}
+                                          </div>
                                         </div>
                                       </div>
                                     )}

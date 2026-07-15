@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpenCheck, PlayCircle } from "lucide-react";
+import { Award, BookOpenCheck, PlayCircle } from "lucide-react";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -72,14 +72,21 @@ const MyLearningPage = () => {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {resumeLessonId && (
+                      {completion === 100 ? (
+                        <Button asChild className="bg-accent hover:bg-accent-hover text-accent-foreground">
+                          <Link to={`/course/${course.id}`}>
+                            <Award className="h-4 w-4 mr-1" />
+                            Ver Certificado
+                          </Link>
+                        </Button>
+                      ) : resumeLessonId ? (
                         <Button asChild className="bg-accent hover:bg-accent-hover text-accent-foreground">
                           <Link to={`/student/${course.id}/${resumeLessonId}`}>
                             <PlayCircle className="h-4 w-4 mr-1" />
                             Continuar
                           </Link>
                         </Button>
-                      )}
+                      ) : null}
                       <Button asChild variant="outline">
                         <Link to={`/course/${course.id}`}>Ver curso</Link>
                       </Button>

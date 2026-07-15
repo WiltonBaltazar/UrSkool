@@ -3,15 +3,21 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\NormalizesCourseAttributes;
 use App\Models\Course;
+use App\Support\LessonCodeValidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class CourseController extends Controller
 {
+    use NormalizesCourseAttributes;
     public function index(): JsonResponse
     {
         $courses = Course::query()
@@ -42,6 +48,7 @@ class CourseController extends Controller
         });
 
         $course->load('sections.lessons');
+        Cache::put('courses.cache_version', (string) microtime(true));
 
         return response()->json([
             'message' => 'Curso criado com sucesso.',
@@ -52,14 +59,22 @@ class CourseController extends Controller
     public function update(Request $request, Course $course): JsonResponse
     {
         $validated = $this->validatePayload($request);
+        $course->load('sections.lessons');
+        $managedUrlsBeforeUpdate = $this->collectManagedTextMediaUrls($course);
 
         $course = DB::transaction(function () use ($course, $validated): Course {
-            $course->sections()->delete();
+            $course->sections->each(function ($section): void {
+                $section->lessons()->forceDelete();
+                $section->forceDelete();
+            });
 
             return $this->persistCourse($course, $validated);
         });
 
         $course->load('sections.lessons');
+        $managedUrlsAfterUpdate = $this->collectManagedTextMediaUrls($course);
+        $this->deleteManagedTextMediaUrls(array_values(array_diff($managedUrlsBeforeUpdate, $managedUrlsAfterUpdate)));
+        Cache::put('courses.cache_version', (string) microtime(true));
 
         return response()->json([
             'message' => 'Curso atualizado com sucesso.',
@@ -69,7 +84,10 @@ class CourseController extends Controller
 
     public function destroy(Course $course): JsonResponse
     {
+        // Soft-delete: storage files are preserved in case of restore.
+        // The Course::booted() event cascades the soft-delete to sections and lessons.
         $course->delete();
+        Cache::put('courses.cache_version', (string) microtime(true));
 
         return response()->json([
             'message' => 'Curso eliminado com sucesso.',
@@ -115,6 +133,11 @@ class CourseController extends Controller
             'sections.*.lessons.*.title' => ['required', 'string', 'max:255'],
             'sections.*.lessons.*.duration' => ['nullable', 'string', 'max:50'],
             'sections.*.lessons.*.videoUrl' => ['nullable', 'url', 'max:2048'],
+            'sections.*.lessons.*.textMediaType' => ['nullable', Rule::in(['none', 'image', 'youtube'])],
+            'sections.*.lessons.*.textMediaImageUrl' => ['nullable', 'string', 'max:2048'],
+            'sections.*.lessons.*.textMediaImageFile' => ['nullable', 'file', 'image', 'max:6144'],
+            'sections.*.lessons.*.removeTextMediaImage' => ['nullable', 'boolean'],
+            'sections.*.lessons.*.textMediaYoutubeUrl' => ['nullable', 'url', 'max:2048'],
             'sections.*.lessons.*.language' => ['nullable', 'string', 'max:40'],
             'sections.*.lessons.*.content' => ['nullable', 'string'],
             'sections.*.lessons.*.starterCode' => ['nullable', 'string'],
@@ -127,7 +150,13 @@ class CourseController extends Controller
             'sections.*.lessons.*.workspaceFiles.*.language' => ['required_with:sections.*.lessons.*.workspaceFiles', 'in:html,css,js'],
             'sections.*.lessons.*.workspaceFiles.*.content' => ['nullable', 'string'],
             'sections.*.lessons.*.entryHtmlFileId' => ['nullable', 'string', 'max:120'],
-            'sections.*.lessons.*.isFree' => ['nullable', 'boolean'],
+            'sections.*.lessons.*.validationRules' => ['nullable', 'array'],
+            'sections.*.lessons.*.validationRules.*.kind' => [
+                'required_with:sections.*.lessons.*.validationRules',
+                'string',
+                Rule::in(LessonCodeValidator::ALLOWED_RULE_KINDS),
+            ],
+            'sections.*.lessons.*.validationRules.*.value' => ['required_with:sections.*.lessons.*.validationRules', 'string', 'max:500'],
             'sections.*.lessons.*.type' => ['nullable', 'in:video,text,code,quiz,project'],
             'sections.*.lessons.*.quizQuestions' => ['nullable', 'array'],
             'sections.*.lessons.*.quizQuestions.*.id' => ['nullable', 'string', 'max:120'],
@@ -185,12 +214,18 @@ class CourseController extends Controller
             foreach (($sectionPayload['lessons'] ?? []) as $lessonIndex => $lessonPayload) {
                 $type = $lessonPayload['type'] ?? 'video';
                 $isQuizLesson = $type === 'quiz';
+                $isCodePracticeLesson = in_array($type, ['code', 'project'], true);
+                $validationRules = $isCodePracticeLesson
+                    ? $this->resolveValidationRules($lessonPayload)
+                    : null;
+                $textMedia = $this->resolveTextMediaPayload($lessonPayload, $type);
 
                 $section->lessons()->create([
                     'title' => $lessonPayload['title'],
                     'duration' => $lessonPayload['duration'] ?? null,
-                    'video_url' => $lessonPayload['videoUrl'] ?? null,
-                    'is_free' => (bool) ($lessonPayload['isFree'] ?? false),
+                    'video_url' => $textMedia['videoUrl'],
+                    'text_media_type' => $textMedia['type'],
+                    'text_media_image_url' => $textMedia['imageUrl'],
                     'language' => $lessonPayload['language'] ?? null,
                     'content' => $lessonPayload['content'] ?? null,
                     'starter_code' => $lessonPayload['starterCode'] ?? null,
@@ -199,6 +234,7 @@ class CourseController extends Controller
                     'js_code' => $lessonPayload['jsCode'] ?? null,
                     'workspace_files' => $this->normalizeWorkspaceFiles($lessonPayload),
                     'entry_html_file_id' => $this->normalizeEntryHtmlFileId($lessonPayload),
+                    'validation_rules' => $validationRules,
                     'quiz_questions' => $isQuizLesson
                         ? $this->normalizeQuizQuestions($lessonPayload['quizQuestions'] ?? [])
                         : null,
@@ -243,7 +279,9 @@ class CourseController extends Controller
                     'title' => $lesson->title,
                     'duration' => $lesson->duration,
                     'videoUrl' => $lesson->video_url,
-                    'isFree' => (bool) $lesson->is_free,
+                    'textMediaType' => $lesson->text_media_type,
+                    'textMediaImageUrl' => $lesson->text_media_image_url,
+                    'textMediaYoutubeUrl' => $lesson->type === 'text' ? $lesson->video_url : null,
                     'type' => $lesson->type,
                     'language' => $lesson->language,
                     'content' => $lesson->content,
@@ -253,6 +291,7 @@ class CourseController extends Controller
                     'jsCode' => $lesson->js_code,
                     'workspaceFiles' => $lesson->workspace_files,
                     'entryHtmlFileId' => $lesson->entry_html_file_id,
+                    'validationRules' => $lesson->validation_rules,
                     'quizQuestions' => $lesson->quiz_questions,
                     'quizPassPercentage' => $lesson->quiz_pass_percentage,
                     'quizRandomizeQuestions' => $lesson->quiz_randomize_questions,
@@ -400,23 +439,132 @@ class CourseController extends Controller
         return null;
     }
 
-    private function normalizeCategory(string $value): string
+    private function normalizeValidationRules(array $lessonPayload): array
     {
-        return match ($value) {
-            'Web Development' => 'Desenvolvimento Web',
-            'Web Design' => 'Design Web',
-            'UI Design' => 'Design de UI',
-            default => $value,
-        };
+        return LessonCodeValidator::normalizeRules($lessonPayload['validationRules'] ?? null);
     }
 
-    private function normalizeLevel(string $value): string
+    private function resolveValidationRules(array $lessonPayload): ?array
     {
-        return match ($value) {
-            'Beginner' => 'Iniciante',
-            'Intermediate' => 'Intermediário',
-            'Advanced' => 'Avançado',
-            default => $value,
-        };
+        $normalized = $this->normalizeValidationRules($lessonPayload);
+        if ($normalized !== []) {
+            return $normalized;
+        }
+
+        $derived = LessonCodeValidator::deriveValidationRules([
+            'html' => (string) ($lessonPayload['htmlCode'] ?? ''),
+            'css' => (string) ($lessonPayload['cssCode'] ?? ''),
+            'js' => (string) ($lessonPayload['jsCode'] ?? ''),
+        ]);
+
+        return $derived === [] ? null : $derived;
     }
+
+    private function resolveTextMediaPayload(array $lessonPayload, string $lessonType): array
+    {
+        $videoUrl = trim((string) ($lessonPayload['videoUrl'] ?? ''));
+
+        if ($lessonType !== 'text') {
+            return [
+                'videoUrl' => $videoUrl !== '' ? $videoUrl : null,
+                'type' => null,
+                'imageUrl' => null,
+            ];
+        }
+
+        $rawMediaType = trim((string) ($lessonPayload['textMediaType'] ?? ''));
+        $mediaType = in_array($rawMediaType, ['none', 'image', 'youtube'], true) ? $rawMediaType : '';
+
+        $imageUrl = trim((string) ($lessonPayload['textMediaImageUrl'] ?? ''));
+        $youtubeUrl = trim((string) ($lessonPayload['textMediaYoutubeUrl'] ?? $videoUrl));
+        $removeImage = filter_var(
+            $lessonPayload['removeTextMediaImage'] ?? false,
+            FILTER_VALIDATE_BOOLEAN
+        );
+
+        if ($removeImage) {
+            $imageUrl = '';
+        }
+
+        $imageFile = $lessonPayload['textMediaImageFile'] ?? null;
+        if ($imageFile instanceof UploadedFile) {
+            $storedPath = $imageFile->store('lessons/text-media', 'public');
+            $imageUrl = Storage::disk('public')->url($storedPath);
+        }
+
+        if ($mediaType === '') {
+            $mediaType = $imageUrl !== ''
+                ? 'image'
+                : ($youtubeUrl !== '' ? 'youtube' : 'none');
+        }
+
+        if ($mediaType === 'none') {
+            return [
+                'videoUrl' => null,
+                'type' => null,
+                'imageUrl' => null,
+            ];
+        }
+
+        if ($mediaType === 'image' && $imageUrl === '') {
+            $mediaType = $youtubeUrl !== '' ? 'youtube' : 'none';
+        }
+
+        if ($mediaType === 'youtube' && $youtubeUrl === '') {
+            $mediaType = $imageUrl !== '' ? 'image' : 'none';
+        }
+
+        return [
+            'videoUrl' => $mediaType === 'youtube' ? $youtubeUrl : null,
+            'type' => $mediaType === 'none' ? null : $mediaType,
+            'imageUrl' => $mediaType === 'image' ? $imageUrl : null,
+        ];
+    }
+
+    private function collectManagedTextMediaUrls(Course $course): array
+    {
+        return $course->sections
+            ->flatMap(fn ($section) => $section->lessons)
+            ->pluck('text_media_image_url')
+            ->filter(fn ($url): bool => is_string($url) && $url !== '' && $this->isManagedTextMediaUrl($url))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function deleteManagedTextMediaUrls(array $urls): void
+    {
+        foreach ($urls as $url) {
+            $this->deleteManagedTextMediaFile((string) $url);
+        }
+    }
+
+    private function deleteManagedTextMediaFile(string $url): void
+    {
+        $parsedPath = parse_url($url, PHP_URL_PATH);
+        if (! is_string($parsedPath) || $parsedPath === '') {
+            return;
+        }
+
+        $storagePrefix = '/storage/';
+        if (! str_starts_with($parsedPath, $storagePrefix)) {
+            return;
+        }
+
+        $relativePath = ltrim(substr($parsedPath, strlen($storagePrefix)), '/');
+        if ($relativePath === '' || ! str_starts_with($relativePath, 'lessons/text-media/')) {
+            return;
+        }
+
+        Storage::disk('public')->delete($relativePath);
+    }
+
+    private function isManagedTextMediaUrl(string $url): bool
+    {
+        $parsedPath = parse_url($url, PHP_URL_PATH);
+
+        return is_string($parsedPath)
+            && str_starts_with($parsedPath, '/storage/lessons/text-media/');
+    }
+
 }

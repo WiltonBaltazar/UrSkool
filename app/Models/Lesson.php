@@ -6,17 +6,19 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Lesson extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'section_id',
         'title',
         'duration',
         'video_url',
-        'is_free',
+        'text_media_type',
+        'text_media_image_url',
         'type',
         'language',
         'content',
@@ -26,6 +28,7 @@ class Lesson extends Model
         'js_code',
         'workspace_files',
         'entry_html_file_id',
+        'validation_rules',
         'quiz_questions',
         'quiz_pass_percentage',
         'quiz_randomize_questions',
@@ -33,10 +36,10 @@ class Lesson extends Model
     ];
 
     protected $casts = [
-        'is_free' => 'boolean',
         'sort_order' => 'integer',
         'quiz_questions' => 'array',
         'workspace_files' => 'array',
+        'validation_rules' => 'array',
         'quiz_pass_percentage' => 'integer',
         'quiz_randomize_questions' => 'boolean',
     ];

@@ -13,6 +13,7 @@ interface CodeHighlightEditorProps {
   minHeightClassName?: string;
   enableTabIndentation?: boolean;
   indentWith?: string;
+  wrapLines?: boolean;
 }
 
 type TokenType =
@@ -150,6 +151,7 @@ const CodeHighlightEditor = ({
   minHeightClassName = "min-h-[170px]",
   enableTabIndentation = true,
   indentWith = "  ",
+  wrapLines = false,
 }: CodeHighlightEditorProps) => {
   const preRef = useRef<HTMLPreElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -251,10 +253,17 @@ const CodeHighlightEditor = ({
         ref={preRef}
         aria-hidden
         className={cn(
-          "pointer-events-none overflow-auto whitespace-pre p-3 font-mono text-xs leading-6 text-slate-200",
+          "pointer-events-none p-3 font-mono text-xs leading-6 text-slate-200",
+          wrapLines ? "overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words" : "overflow-auto whitespace-pre",
           minHeightClassName,
         )}
-        style={{ tabSize: 2 }}
+        style={{
+          tabSize: 2,
+          whiteSpace: wrapLines ? "pre-wrap" : "pre",
+          overflowX: wrapLines ? "hidden" : "auto",
+          overflowWrap: wrapLines ? "anywhere" : "normal",
+          wordBreak: "normal",
+        }}
         dangerouslySetInnerHTML={{
           __html: highlighted || `<span style="color:#64748b;">${escapeHtml(placeholder || "")}</span>\n`,
         }}
@@ -263,6 +272,7 @@ const CodeHighlightEditor = ({
         <textarea
           ref={textareaRef}
           value={value}
+          wrap={wrapLines ? "soft" : "off"}
           spellCheck={false}
           onChange={(event) => onChange?.(event.target.value)}
           onKeyDown={handleKeyDown}
@@ -272,11 +282,18 @@ const CodeHighlightEditor = ({
             preRef.current.scrollLeft = event.currentTarget.scrollLeft;
           }}
           className={cn(
-            "absolute inset-0 w-full resize-none overflow-auto bg-transparent p-3 font-mono text-xs leading-6",
+            "absolute inset-0 w-full resize-none bg-transparent p-3 font-mono text-xs leading-6",
             "text-transparent caret-slate-100 outline-none selection:bg-slate-300/30",
+            wrapLines ? "overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words" : "overflow-auto whitespace-pre",
             minHeightClassName,
           )}
-          style={{ tabSize: 2 }}
+          style={{
+            tabSize: 2,
+            whiteSpace: wrapLines ? "pre-wrap" : "pre",
+            overflowX: wrapLines ? "hidden" : "auto",
+            overflowWrap: wrapLines ? "anywhere" : "normal",
+            wordBreak: "normal",
+          }}
         />
       )}
     </div>

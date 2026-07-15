@@ -6,6 +6,7 @@ use App\Models\Course;
 use App\Models\Enrollment;
 use App\Models\Lesson;
 use App\Models\Section;
+use App\Support\LessonCodeValidator;
 use Illuminate\Database\Seeder;
 
 class CourseSeeder extends Seeder
@@ -567,9 +568,23 @@ class CourseSeeder extends Seeder
                                 'type' => 'code',
                                 'language' => 'javascript',
                                 'content' => "Cria uma mensagem dinamica de boas-vindas.\n\nRequisitos:\n1. Ler o nome de estudante numa variavel.\n2. Mostrar texto no elemento #greeting.\n3. Mudar cor da mensagem quando clicar no botao.",
+                                'examples' => [
+                                    [
+                                        'label' => 'Atualizar conteudo no DOM',
+                                        'language' => 'js',
+                                        'code' => "const greeting = document.getElementById('greeting');\ngreeting.textContent = 'Bem-vinda, Sofia!';",
+                                    ],
+                                ],
+                                'hint' => 'Atualiza o texto com textContent e usa style.color ou classList no clique do botao.',
                                 'html_code' => "<h2 id=\"greeting\">Bem-vindo</h2>\n<button id=\"theme\">Mudar destaque</button>",
                                 'css_code' => "body { font-family: system-ui, -apple-system, sans-serif; }\n#greeting { color: #0f172a; }\nbutton { margin-top: 12px; border: 1px solid #111827; background: #111827; color: #fff; border-radius: 8px; padding: 8px 12px; }",
                                 'js_code' => "const greeting = document.getElementById('greeting');\nconst button = document.getElementById('theme');\nif (button) {\n  button.addEventListener('click', () => {\n    console.log('Implementa a logica de interacao aqui.');\n  });\n}",
+                                'validation_rules' => [
+                                    ['kind' => 'selector_exists', 'value' => '#greeting'],
+                                    ['kind' => 'selector_exists', 'value' => '#theme'],
+                                    ['kind' => 'js_includes', 'value' => 'textContent'],
+                                    ['kind' => 'js_includes', 'value' => 'addEventListener'],
+                                ],
                             ],
                             [
                                 'title' => 'Checkpoint de Logica JavaScript',
@@ -624,9 +639,24 @@ class CourseSeeder extends Seeder
                                 'type' => 'code',
                                 'language' => 'javascript',
                                 'content' => "Implementa filtro por categoria.\n\nRequisitos:\n1. Escutar clique dos botoes de filtro.\n2. Atualizar texto de estado em #status.\n3. Marcar botao ativo com classe .active.",
+                                'examples' => [
+                                    [
+                                        'label' => 'Atualizar estado do filtro',
+                                        'language' => 'js',
+                                        'code' => "const filter = button.dataset.filter;\nstatus.textContent = `Filtro atual: \${filter}`;",
+                                    ],
+                                ],
+                                'hint' => 'Remove .active de todos os botoes antes de aplicar no botao clicado.',
                                 'html_code' => "<div class=\"filters\">\n  <button data-filter=\"all\">Todos</button>\n  <button data-filter=\"frontend\">Frontend</button>\n  <button data-filter=\"backend\">Backend</button>\n</div>\n<p id=\"status\">Filtro atual: all</p>",
                                 'css_code' => ".filters { display: flex; gap: 10px; }\nbutton { border: 1px solid #111827; background: #fff; color: #111827; border-radius: 8px; padding: 8px 12px; }\nbutton.active { background: #111827; color: #fff; }\n#status { margin-top: 14px; font-family: system-ui, sans-serif; }",
                                 'js_code' => "const status = document.getElementById('status');\nconst buttons = document.querySelectorAll('.filters button');\nbuttons.forEach((button) => {\n  button.addEventListener('click', () => {\n    console.log('Completa a logica de filtro');\n  });\n});",
+                                'validation_rules' => [
+                                    ['kind' => 'selector_exists', 'value' => '.filters'],
+                                    ['kind' => 'selector_exists', 'value' => '#status'],
+                                    ['kind' => 'js_includes', 'value' => 'dataset'],
+                                    ['kind' => 'js_includes', 'value' => 'classList'],
+                                    ['kind' => 'js_includes', 'value' => 'textContent'],
+                                ],
                             ],
                             [
                                 'title' => 'Validacao de Formulario Basico',
@@ -635,9 +665,25 @@ class CourseSeeder extends Seeder
                                 'type' => 'code',
                                 'language' => 'javascript',
                                 'content' => "Valida email e contacto antes de submeter.\n\nRequisitos:\n1. Bloquear submissao quando campos estiverem vazios.\n2. Mostrar mensagem de erro em #error.\n3. Mostrar mensagem de sucesso em #success.",
+                                'examples' => [
+                                    [
+                                        'label' => 'Validacao minima',
+                                        'language' => 'js',
+                                        'code' => "if (!emailValue || !contactValue) {\n  error.textContent = 'Preenche email e contacto.';\n  success.textContent = '';\n}",
+                                    ],
+                                ],
+                                'hint' => 'Usa trim() nos campos para evitar que espacos em branco contem como valor valido.',
                                 'html_code' => "<form id=\"signup-form\">\n  <input id=\"email\" type=\"email\" placeholder=\"email@dominio.com\" />\n  <input id=\"contact\" type=\"tel\" placeholder=\"84xxxxxxx\" />\n  <button type=\"submit\">Enviar</button>\n</form>\n<p id=\"error\"></p>\n<p id=\"success\"></p>",
                                 'css_code' => "form { display: grid; gap: 10px; max-width: 360px; }\ninput { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; }\nbutton { border: 1px solid #111827; background: #111827; color: #fff; border-radius: 8px; padding: 8px 12px; }\n#error { color: #b91c1c; }\n#success { color: #166534; }",
                                 'js_code' => "const form = document.getElementById('signup-form');\nif (form) {\n  form.addEventListener('submit', (event) => {\n    event.preventDefault();\n    console.log('Implementa validacao aqui.');\n  });\n}",
+                                'validation_rules' => [
+                                    ['kind' => 'selector_exists', 'value' => '#signup-form'],
+                                    ['kind' => 'selector_exists', 'value' => '#error'],
+                                    ['kind' => 'selector_exists', 'value' => '#success'],
+                                    ['kind' => 'js_includes', 'value' => 'preventDefault'],
+                                    ['kind' => 'js_includes', 'value' => 'textContent'],
+                                    ['kind' => 'js_includes', 'value' => 'trim'],
+                                ],
                             ],
                             [
                                 'title' => 'Checkpoint de DOM e Eventos',
@@ -689,12 +735,28 @@ class CourseSeeder extends Seeder
                                 'title' => 'To-do List com Persistencia no Browser',
                                 'duration' => '24:00',
                                 'is_free' => false,
-                                'type' => 'code',
+                                'type' => 'project',
                                 'language' => 'javascript',
                                 'content' => "Projeto final do curso.\n\nRequisitos:\n1. Adicionar tarefas a lista.\n2. Marcar tarefa como concluida.\n3. Guardar tarefas no localStorage.",
+                                'examples' => [
+                                    [
+                                        'label' => 'Persistir tarefas',
+                                        'language' => 'js',
+                                        'code' => "localStorage.setItem('tasks', JSON.stringify(tasks));\nconst saved = JSON.parse(localStorage.getItem('tasks') || '[]');",
+                                    ],
+                                ],
+                                'hint' => 'Separa em 3 funcoes: adicionar, renderizar e guardar/carregar no localStorage.',
                                 'html_code' => "<h2>Minhas tarefas</h2>\n<input id=\"task-input\" placeholder=\"Nova tarefa\" />\n<button id=\"add-task\">Adicionar</button>\n<ul id=\"task-list\"></ul>",
                                 'css_code' => "body { font-family: system-ui, sans-serif; padding: 20px; }\ninput, button { padding: 8px; }\nul { margin-top: 12px; }\nli { margin-bottom: 8px; }",
                                 'js_code' => "const list = document.getElementById('task-list');\ndocument.getElementById('add-task')?.addEventListener('click', () => {\n  console.log('Completa a to-do list');\n});",
+                                'validation_rules' => [
+                                    ['kind' => 'selector_exists', 'value' => '#task-input'],
+                                    ['kind' => 'selector_exists', 'value' => '#add-task'],
+                                    ['kind' => 'selector_exists', 'value' => '#task-list'],
+                                    ['kind' => 'js_includes', 'value' => 'localStorage'],
+                                    ['kind' => 'js_includes', 'value' => 'createElement'],
+                                    ['kind' => 'js_includes', 'value' => 'addEventListener'],
+                                ],
                             ],
                         ],
                     ],
@@ -732,9 +794,25 @@ class CourseSeeder extends Seeder
                                 'type' => 'code',
                                 'language' => 'html',
                                 'content' => "Melhora acessibilidade deste formulario.\n\nRequisitos:\n1. Associar labels a todos os inputs.\n2. Exibir mensagens de erro claras.\n3. Garantir foco visivel no teclado.",
+                                'examples' => [
+                                    [
+                                        'label' => 'Label associado corretamente',
+                                        'language' => 'html',
+                                        'code' => "<label for=\"name\">Nome completo</label>\n<input id=\"name\" />",
+                                    ],
+                                ],
+                                'hint' => 'Evita depender apenas de placeholder; o label deve existir para cada campo.',
                                 'html_code' => "<form class=\"register\">\n  <input id=\"name\" placeholder=\"Nome completo\" />\n  <input id=\"email\" type=\"email\" placeholder=\"email@dominio.com\" />\n  <button type=\"submit\">Criar conta</button>\n</form>\n<p id=\"help\"></p>",
                                 'css_code' => ".register {\n  display: grid;\n  gap: 10px;\n  max-width: 380px;\n}\n\n.register input {\n  border: 1px solid #cbd5e1;\n  border-radius: 8px;\n  padding: 10px;\n}\n\n.register button {\n  border: 1px solid #111827;\n  border-radius: 8px;\n  background: #111827;\n  color: #fff;\n  padding: 10px 14px;\n}",
                                 'js_code' => "document.querySelector('.register')?.addEventListener('submit', (event) => {\n  event.preventDefault();\n  console.log('Valida os campos e mostra feedback acessivel.');\n});",
+                                'validation_rules' => [
+                                    ['kind' => 'selector_exists', 'value' => 'form'],
+                                    ['kind' => 'selector_exists', 'value' => '#name'],
+                                    ['kind' => 'selector_exists', 'value' => '#email'],
+                                    ['kind' => 'html_includes', 'value' => '<label'],
+                                    ['kind' => 'html_includes', 'value' => 'for=\"name\"'],
+                                    ['kind' => 'html_includes', 'value' => 'for=\"email\"'],
+                                ],
                             ],
                             [
                                 'title' => 'Checkpoint de Acessibilidade',
@@ -789,9 +867,23 @@ class CourseSeeder extends Seeder
                                 'type' => 'code',
                                 'language' => 'css',
                                 'content' => "Adiciona estados hover, focus e disabled.\n\nRequisitos:\n1. Botao principal com hover claro.\n2. Estilo :focus-visible para navegacao por teclado.\n3. Variante disabled com contraste adequado.",
+                                'examples' => [
+                                    [
+                                        'label' => 'Estados essenciais',
+                                        'language' => 'css',
+                                        'code' => ".btn-primary:hover { opacity: .92; }\n.btn-primary:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }\n.btn-primary:disabled { opacity: .55; cursor: not-allowed; }",
+                                    ],
+                                ],
+                                'hint' => 'Aplica :focus-visible para nao poluir cliques de rato e manter acessibilidade no teclado.',
                                 'html_code' => "<button class=\"btn-primary\">Guardar alteracoes</button>\n<button class=\"btn-primary\" disabled>A processar</button>",
                                 'css_code' => ".btn-primary {\n  border: 1px solid #111827;\n  background: #111827;\n  color: #fff;\n  border-radius: 8px;\n  padding: 10px 14px;\n}",
                                 'js_code' => "console.log('Define estados de interacao no CSS.');",
+                                'validation_rules' => [
+                                    ['kind' => 'selector_exists', 'value' => '.btn-primary'],
+                                    ['kind' => 'css_includes', 'value' => ':hover'],
+                                    ['kind' => 'css_includes', 'value' => ':focus-visible'],
+                                    ['kind' => 'css_includes', 'value' => ':disabled'],
+                                ],
                             ],
                             [
                                 'title' => 'Checklist de UX para Checkout',
@@ -843,16 +935,48 @@ class CourseSeeder extends Seeder
                                 'title' => 'Checkout Completo com Feedback',
                                 'duration' => '18:15',
                                 'is_free' => false,
-                                'type' => 'code',
+                                'type' => 'project',
                                 'language' => 'javascript',
                                 'content' => "Entrega final do curso de UX/UI.\n\nRequisitos:\n1. Criar formulario com nome, email, contacto e password.\n2. Validar campos e mostrar erro em vermelho.\n3. Mostrar confirmacao em verde quando dados forem validos.",
+                                'examples' => [
+                                    [
+                                        'label' => 'Fluxo de validacao',
+                                        'language' => 'js',
+                                        'code' => "if (isValid) {\n  success.textContent = 'Dados validados com sucesso.';\n  error.textContent = '';\n} else {\n  error.textContent = 'Corrige os campos obrigatorios.';\n}",
+                                    ],
+                                ],
+                                'hint' => 'Centraliza validacao numa funcao para manter regras claras e facilitar manutencao.',
                                 'html_code' => "<form id=\"checkout\">\n  <label for=\"full-name\">Nome</label>\n  <input id=\"full-name\" />\n  <label for=\"mail\">Email</label>\n  <input id=\"mail\" type=\"email\" />\n  <label for=\"phone\">Contacto</label>\n  <input id=\"phone\" type=\"tel\" />\n  <label for=\"pass\">Password</label>\n  <input id=\"pass\" type=\"password\" />\n  <button type=\"submit\">Finalizar compra</button>\n</form>\n<p id=\"error\"></p>\n<p id=\"success\"></p>",
                                 'css_code' => "body { font-family: system-ui, sans-serif; padding: 20px; }\nform { display: grid; gap: 8px; max-width: 420px; }\ninput { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; }\nbutton { margin-top: 8px; border: 1px solid #111827; border-radius: 8px; background: #111827; color: #fff; padding: 10px 12px; }\n#error { color: #b91c1c; margin-top: 10px; }\n#success { color: #166534; margin-top: 6px; }",
                                 'js_code' => "document.getElementById('checkout')?.addEventListener('submit', (event) => {\n  event.preventDefault();\n  console.log('Implementa a validacao final do checkout.');\n});",
+                                'validation_rules' => [
+                                    ['kind' => 'selector_exists', 'value' => '#checkout'],
+                                    ['kind' => 'selector_exists', 'value' => '#error'],
+                                    ['kind' => 'selector_exists', 'value' => '#success'],
+                                    ['kind' => 'js_includes', 'value' => 'preventDefault'],
+                                    ['kind' => 'js_includes', 'value' => 'textContent'],
+                                    ['kind' => 'js_includes', 'value' => 'trim'],
+                                ],
                             ],
                         ],
                     ],
                 ],
+            ],
+            [
+                'title' => 'UI com CSS: do design system ao dashboard',
+                'subtitle' => 'Percurso completo para criar interfaces profissionais com CSS: tokens, componentes, responsividade e projeto final.',
+                'instructor' => 'Celina Macamo',
+                'rating' => 4.8,
+                'review_count' => 5210,
+                'student_count' => 12840,
+                'price' => 1890.00,
+                'original_price' => 7100.00,
+                'image' => 'https://images.unsplash.com/photo-1545239351-1141bd82e8a6?w=600&h=400&fit=crop',
+                'category' => 'UX/UI',
+                'level' => 'Iniciante',
+                'total_hours' => 42,
+                'description' => 'Formacao completa de UI com CSS: design tokens, tipografia, componentes, estados, grids, acessibilidade e projeto final com dashboard.',
+                'sections' => $this->buildUiCssMasterSections(),
             ],
         ];
 
@@ -887,20 +1011,34 @@ class CourseSeeder extends Seeder
                 foreach ($lessons as $lessonIndex => $lessonData) {
                     $lessonType = (string) ($lessonData['type'] ?? 'code');
                     $content = $this->formatLessonContent($lessonData, $lessonType);
-                    $isCodeLesson = $lessonType === 'code';
+                    $isCodePracticeLesson = in_array($lessonType, ['code', 'project'], true);
+                    $htmlCode = $isCodePracticeLesson ? (string) ($lessonData['html_code'] ?? '') : '';
+                    $cssCode = $isCodePracticeLesson ? (string) ($lessonData['css_code'] ?? '') : '';
+                    $jsCode = $isCodePracticeLesson ? (string) ($lessonData['js_code'] ?? '') : '';
+                    $workspaceFiles = $isCodePracticeLesson
+                        ? $this->buildWorkspaceFiles($htmlCode, $cssCode, $jsCode)
+                        : null;
+                    $validationRules = $isCodePracticeLesson
+                        ? $this->resolveValidationRules($lessonData, $htmlCode, $cssCode, $jsCode)
+                        : null;
 
                     $section->lessons()->create([
                         'title' => $lessonData['title'],
                         'duration' => $lessonData['duration'],
                         'is_free' => $lessonData['is_free'],
                         'video_url' => $lessonData['video_url'] ?? null,
+                        'text_media_type' => $lessonData['text_media_type'] ?? null,
+                        'text_media_image_url' => $lessonData['text_media_image_url'] ?? null,
                         'type' => $lessonType,
                         'language' => $lessonData['language'] ?? null,
                         'content' => $content,
-                        'starter_code' => $isCodeLesson ? ($lessonData['starter_code'] ?? null) : null,
-                        'html_code' => $isCodeLesson ? ($lessonData['html_code'] ?? null) : null,
-                        'css_code' => $isCodeLesson ? ($lessonData['css_code'] ?? null) : null,
-                        'js_code' => $isCodeLesson ? ($lessonData['js_code'] ?? null) : null,
+                        'starter_code' => $isCodePracticeLesson ? ($lessonData['starter_code'] ?? null) : null,
+                        'html_code' => $isCodePracticeLesson ? ($lessonData['html_code'] ?? null) : null,
+                        'css_code' => $isCodePracticeLesson ? ($lessonData['css_code'] ?? null) : null,
+                        'js_code' => $isCodePracticeLesson ? ($lessonData['js_code'] ?? null) : null,
+                        'workspace_files' => $workspaceFiles,
+                        'entry_html_file_id' => $isCodePracticeLesson ? 'index-html' : null,
+                        'validation_rules' => $validationRules,
                         'quiz_questions' => $lessonData['quiz_questions'] ?? null,
                         'quiz_pass_percentage' => $lessonData['quiz_pass_percentage'] ?? null,
                         'quiz_randomize_questions' => $lessonData['quiz_randomize_questions'] ?? null,
@@ -1546,6 +1684,696 @@ TEXT,
         ];
     }
 
+    private function buildUiCssMasterSections(): array
+    {
+        return [
+            [
+                'title' => '1. Fundamentos visuais e design tokens',
+                'lessons' => [
+                    [
+                        'title' => 'Hierarquia visual para interfaces',
+                        'duration' => '09:20',
+                        'is_free' => true,
+                        'type' => 'text',
+                        'text_media_type' => 'image',
+                        'text_media_image_url' => 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=1400&h=900&fit=crop',
+                        'content' => <<<'TEXT'
+A hierarquia visual organiza a ordem de leitura da interface. O utilizador deve perceber
+em poucos segundos qual e a mensagem principal, qual e o contexto e qual acao deve executar.
+Quando titulo, subtitulo e botao competem com o mesmo peso visual, a interface perde clareza.
+
+Em UI com CSS, hierarquia nasce da combinacao entre escala tipografica, contraste de cor,
+espacamento e agrupamento de elementos relacionados. Titulos maiores e com maior peso
+capturam atencao primeiro, enquanto texto de apoio com contraste mais suave reduz ruido.
+
+Tambem e importante limitar a quantidade de pontos focais por secao. Um bloco com uma unica
+acao primaria tende a converter melhor do que um bloco com varios botoes de mesmo destaque.
+Isto melhora legibilidade, reduz hesitacao e torna a navegacao mais previsivel.
+
+Na pratica, esta base sera usada nas proximas licoes para construir hero sections, cards e
+componentes com prioridade visual consistente em desktop e mobile.
+TEXT,
+                    ],
+                    [
+                        'title' => 'Leitura guiada de uma landing page real',
+                        'duration' => '08:10',
+                        'is_free' => false,
+                        'type' => 'text',
+                        'text_media_type' => 'youtube',
+                        'video_url' => 'https://www.youtube.com/watch?v=UB1O30fR-EE',
+                        'content' => <<<'TEXT'
+Uma landing page eficaz segue uma narrativa visual: apresenta promessa de valor,
+cria contexto, mostra beneficios e conduz para uma chamada para acao clara.
+Mesmo quando o design parece simples, existe uma intencao forte na ordem dos blocos.
+
+Ao analisar um exemplo real, repara como cabecalho, hero, prova social, beneficios e
+preco se ligam numa sequencia logica. Cada secao responde a uma pergunta do utilizador:
+o que e isto, porque importa, como funciona e qual e o proximo passo.
+
+No CSS, esta organizacao depende de composicao, espacamento e contraste. O layout precisa
+de manter consistencia entre secoes, garantindo leitura fluida em diferentes larguras
+de ecra sem perder foco no conteudo principal.
+
+Esta leitura orientada por estrutura vai servir como referencia para o projeto final,
+onde vais transformar estes principios em componentes reutilizaveis e layout responsivo.
+TEXT,
+                    ],
+                    [
+                        'title' => 'Base do design system com variaveis CSS',
+                        'duration' => '15:30',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Cria uma base de design tokens reutilizavel.\n\nRequisitos:\n1. Definir variaveis em :root para cores, espacamento e radius.\n2. Aplicar os tokens no body, no card e no botao principal.\n3. Remover valores fixos de cor dos componentes principais.",
+                        'examples' => [
+                            [
+                                'label' => 'Token baseline',
+                                'language' => 'css',
+                                'code' => ":root {\n  --color-bg: #f8fafc;\n  --color-text: #0f172a;\n  --color-primary: #2563eb;\n  --space-md: 16px;\n}",
+                            ],
+                        ],
+                        'hint' => 'Comeca por definir os tokens e so depois substitui o CSS existente por var(...).',
+                        'html_code' => "<main class=\"page\">\n  <article class=\"card\">\n    <h1>Design System</h1>\n    <p>Configura tokens e aplica nos componentes.</p>\n    <button class=\"btn-primary\">Comecar</button>\n  </article>\n</main>",
+                        'css_code' => ".page { padding: 24px; }\n.card { border-radius: 12px; padding: 16px; }\n.btn-primary { border: 0; border-radius: 8px; padding: 10px 14px; }",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'css_includes', 'value' => ':root'],
+                            ['kind' => 'css_includes', 'value' => '--color-primary'],
+                            ['kind' => 'css_includes', 'value' => 'var(--color-primary)'],
+                            ['kind' => 'selector_exists', 'value' => '.btn-primary'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Checkpoint: design tokens',
+                        'duration' => '07:00',
+                        'is_free' => false,
+                        'type' => 'quiz',
+                        'content' => 'Questionario sobre tokens, contraste e consistencia visual.',
+                        'quiz_pass_percentage' => 80,
+                        'quiz_randomize_questions' => true,
+                        'quiz_questions' => [
+                            [
+                                'id' => 'ui-tokens-q1',
+                                'question' => 'Onde normalmente declaramos tokens globais em CSS?',
+                                'options' => [':root', '.container', 'header', '@media'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-tokens-q2',
+                                'question' => 'Qual vantagem de var(--token)?',
+                                'options' => ['consistencia e manutencao', 'executar JavaScript', 'aumentar peso do HTML', 'eliminar classes'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-tokens-q3',
+                                'question' => 'Contraste adequado melhora...',
+                                'options' => ['legibilidade', 'latencia de rede', 'cache do browser', 'minificacao'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-tokens-q4',
+                                'question' => 'Em UI, espacamento consistente ajuda...',
+                                'options' => ['hierarquia e leitura', 'quebra de layout', 'erro de renderizacao', 'reduzir semantica'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-tokens-q5',
+                                'question' => 'Qual abordagem e melhor para escalabilidade?',
+                                'options' => ['classes reutilizaveis + tokens', 'somente estilo inline', 'somente tags sem classe', 'cores hardcoded'],
+                                'correctOptionIndex' => 0,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'title' => '2. Tipografia, cor e superficies',
+                'lessons' => [
+                    [
+                        'title' => 'Escala tipografica e ritmo vertical',
+                        'duration' => '16:10',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Configura tipografia para leitura profissional.\n\nRequisitos:\n1. Definir escala de font-size com unidades rem.\n2. Ajustar line-height para titulos e paragrafos.\n3. Criar classes utilitarias para titulo, subtitulo e texto secundario.",
+                        'examples' => [
+                            [
+                                'label' => 'Escala basica',
+                                'language' => 'css',
+                                'code' => "h1 { font-size: 2rem; line-height: 1.2; }\np { font-size: 1rem; line-height: 1.6; }",
+                            ],
+                        ],
+                        'hint' => 'Usa rem para manter proporcionalidade quando o utilizador aumenta o zoom.',
+                        'html_code' => "<section>\n  <h1 class=\"page-title\">UI CSS Master</h1>\n  <p class=\"lead\">Define escala e legibilidade.</p>\n  <p class=\"text-muted\">Texto de apoio.</p>\n</section>",
+                        'css_code' => "body { font-family: 'Segoe UI', sans-serif; }\n.page-title {}\n.lead {}\n.text-muted {}",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.page-title'],
+                            ['kind' => 'css_includes', 'value' => 'font-size'],
+                            ['kind' => 'css_includes', 'value' => 'line-height'],
+                            ['kind' => 'css_includes', 'value' => 'rem'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Cards e superficies com elevacao',
+                        'duration' => '15:20',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Trabalha superficies e profundidade visual.\n\nRequisitos:\n1. Estilizar .info-card com fundo, borda e radius.\n2. Adicionar box-shadow suave para elevacao.\n3. Criar estado hover com pequena elevacao visual.",
+                        'examples' => [
+                            [
+                                'label' => 'Card com elevacao',
+                                'language' => 'css',
+                                'code' => ".info-card {\n  border-radius: 12px;\n  box-shadow: 0 8px 20px rgba(15,23,42,.08);\n}",
+                            ],
+                        ],
+                        'hint' => 'Mantenha a sombra suave para nao parecer interface pesada.',
+                        'html_code' => "<article class=\"info-card\">\n  <h2>Relatorio semanal</h2>\n  <p>Resumo de desempenho de estudantes.</p>\n</article>",
+                        'css_code' => ".info-card { padding: 16px; border: 1px solid #d1d5db; }\n",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.info-card'],
+                            ['kind' => 'css_includes', 'value' => 'box-shadow'],
+                            ['kind' => 'css_includes', 'value' => 'border-radius'],
+                            ['kind' => 'css_includes', 'value' => ':hover'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Checkpoint: tipografia e superficies',
+                        'duration' => '07:00',
+                        'is_free' => false,
+                        'type' => 'quiz',
+                        'content' => 'Revisa escala tipografica, legibilidade e elevacao visual.',
+                        'quiz_pass_percentage' => 80,
+                        'quiz_randomize_questions' => true,
+                        'quiz_questions' => [
+                            [
+                                'id' => 'ui-type-q1',
+                                'question' => 'Qual unidade e preferida para escala tipografica acessivel?',
+                                'options' => ['rem', 'px fixo em tudo', 'vh', '% no body apenas'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-type-q2',
+                                'question' => 'Qual propriedade melhora legibilidade de paragrafos?',
+                                'options' => ['line-height', 'z-index', 'float', 'position'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-type-q3',
+                                'question' => 'Elevacao visual em card e geralmente feita com...',
+                                'options' => ['box-shadow', 'clip-path', 'zoom', 'mix-blend-mode'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-type-q4',
+                                'question' => 'Qual pratica ajuda consistencia de texto?',
+                                'options' => ['definir classes tipograficas reutilizaveis', 'usar tamanho aleatorio por secao', 'usar somente inline style', 'evitar heading'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-type-q5',
+                                'question' => 'Hover em card deve...',
+                                'options' => ['dar feedback sutil', 'mover 200px para baixo', 'sumir com o card', 'mudar toda a pagina'],
+                                'correctOptionIndex' => 0,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'title' => '3. Componentes de acao e formularios',
+                'lessons' => [
+                    [
+                        'title' => 'Botoes com estados completos',
+                        'duration' => '15:40',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Cria botoes com interacao consistente.\n\nRequisitos:\n1. Estilizar botao primario e secundario.\n2. Definir estados :hover e :focus-visible.\n3. Definir estado disabled com contraste adequado.",
+                        'examples' => [
+                            [
+                                'label' => 'Estados de botao',
+                                'language' => 'css',
+                                'code' => ".btn-primary:hover { filter: brightness(.95); }\n.btn-primary:focus-visible { outline: 3px solid #93c5fd; }\n.btn-primary:disabled { opacity: .55; }",
+                            ],
+                        ],
+                        'hint' => 'O estado de foco precisa ser visivel sem depender da cor de hover.',
+                        'html_code' => "<button class=\"btn-primary\">Guardar</button>\n<button class=\"btn-secondary\">Cancelar</button>\n<button class=\"btn-primary\" disabled>A guardar...</button>",
+                        'css_code' => ".btn-primary { border: 0; border-radius: 8px; padding: 10px 14px; }\n.btn-secondary { border: 1px solid #94a3b8; border-radius: 8px; padding: 10px 14px; }",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.btn-primary'],
+                            ['kind' => 'selector_exists', 'value' => '.btn-secondary'],
+                            ['kind' => 'css_includes', 'value' => ':hover'],
+                            ['kind' => 'css_includes', 'value' => ':focus-visible'],
+                            ['kind' => 'css_includes', 'value' => ':disabled'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Campos de formulario com erro e sucesso',
+                        'duration' => '16:20',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Implementa feedback visual de validacao em formulario.\n\nRequisitos:\n1. Definir classes .field-error e .field-success.\n2. Estilizar mensagens .error-text e .success-text.\n3. Aplicar :focus-visible nos inputs.",
+                        'examples' => [
+                            [
+                                'label' => 'Feedback de validacao',
+                                'language' => 'css',
+                                'code' => ".field-error { border-color: #dc2626; }\n.field-success { border-color: #16a34a; }\n.error-text { color: #b91c1c; }",
+                            ],
+                        ],
+                        'hint' => 'Nao uses apenas cor: combina cor + texto para feedback acessivel.',
+                        'html_code' => "<form class=\"signup-form\">\n  <label for=\"email\">Email</label>\n  <input id=\"email\" class=\"field-error\" />\n  <p class=\"error-text\">Email invalido.</p>\n  <input id=\"phone\" class=\"field-success\" />\n  <p class=\"success-text\">Contacto valido.</p>\n</form>",
+                        'css_code' => ".signup-form { max-width: 420px; display: grid; gap: 8px; }\ninput { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; }",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.signup-form'],
+                            ['kind' => 'css_includes', 'value' => '.field-error'],
+                            ['kind' => 'css_includes', 'value' => '.field-success'],
+                            ['kind' => 'css_includes', 'value' => '.error-text'],
+                            ['kind' => 'css_includes', 'value' => ':focus-visible'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Checkpoint: componentes de formulario',
+                        'duration' => '07:00',
+                        'is_free' => false,
+                        'type' => 'quiz',
+                        'content' => 'Valida fundamentos de estados de botao e formulario.',
+                        'quiz_pass_percentage' => 80,
+                        'quiz_randomize_questions' => true,
+                        'quiz_questions' => [
+                            [
+                                'id' => 'ui-form-q1',
+                                'question' => 'Qual seletor aplica foco para teclado de forma apropriada?',
+                                'options' => [':focus-visible', ':hover', ':target', ':checked'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-form-q2',
+                                'question' => 'Classe de erro deve indicar...',
+                                'options' => ['estado invalido de campo', 'que o campo esta desativado', 'que a pagina terminou', 'que o tema e escuro'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-form-q3',
+                                'question' => 'Estado disabled no botao serve para...',
+                                'options' => ['bloquear acao indisponivel', 'esconder botao', 'submeter automatico', 'substituir validacao'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-form-q4',
+                                'question' => 'Qual pratica melhora clareza de erro?',
+                                'options' => ['mensagem textual objetiva', 'apenas trocar cor da borda', 'remover label', 'usar placeholder vazio'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-form-q5',
+                                'question' => 'Em UI, consistencia de estados ajuda...',
+                                'options' => ['previsibilidade da interacao', 'aumentar complexidade', 'quebrar fluxo', 'reduzir usabilidade'],
+                                'correctOptionIndex' => 0,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'title' => '4. Navegacao e hero responsivo',
+                'lessons' => [
+                    [
+                        'title' => 'Navbar responsiva com Flexbox',
+                        'duration' => '16:40',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Monta cabecalho responsivo para produto digital.\n\nRequisitos:\n1. Organizar logo, menu e CTA com display flex.\n2. Definir espacamento consistente entre itens.\n3. Em mobile, ajustar para layout de coluna com media query.",
+                        'examples' => [
+                            [
+                                'label' => 'Header flex',
+                                'language' => 'css',
+                                'code' => ".site-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }",
+                            ],
+                        ],
+                        'hint' => 'Comeca desktop-first e testa breakpoints ao reduzir a janela.',
+                        'html_code' => "<header class=\"site-header\">\n  <h1 class=\"brand\">UrSkool UI</h1>\n  <nav class=\"menu\">\n    <a href=\"#\">Cursos</a>\n    <a href=\"#\">Planos</a>\n    <a href=\"#\">Contacto</a>\n  </nav>\n  <button class=\"btn-primary\">Inscrever</button>\n</header>",
+                        'css_code' => ".menu { display: flex; gap: 10px; }\n.btn-primary { border: 0; border-radius: 8px; padding: 10px 14px; }",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.site-header'],
+                            ['kind' => 'selector_exists', 'value' => '.menu'],
+                            ['kind' => 'css_includes', 'value' => 'display: flex'],
+                            ['kind' => 'css_includes', 'value' => 'justify-content'],
+                            ['kind' => 'css_includes', 'value' => '@media'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Hero em duas colunas',
+                        'duration' => '15:20',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Cria secao hero com texto e media lado a lado.\n\nRequisitos:\n1. Montar .hero com grid de duas colunas.\n2. Garantir alinhamento vertical entre texto e imagem.\n3. Adaptar para uma coluna em ecras pequenos.",
+                        'examples' => [
+                            [
+                                'label' => 'Hero grid',
+                                'language' => 'css',
+                                'code' => ".hero { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; }",
+                            ],
+                        ],
+                        'hint' => 'Use gap e max-width para evitar que o hero fique espremido em desktop.',
+                        'html_code' => "<section class=\"hero\">\n  <div class=\"hero-content\">\n    <h2>Aprende UI com CSS</h2>\n    <p>Construcao de interfaces modernas para web.</p>\n    <button class=\"btn-primary\">Ver trilha</button>\n  </div>\n  <div class=\"hero-media\">Preview do produto</div>\n</section>",
+                        'css_code' => ".hero-media { border-radius: 12px; background: #e2e8f0; min-height: 220px; }\n",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.hero'],
+                            ['kind' => 'selector_exists', 'value' => '.hero-media'],
+                            ['kind' => 'css_includes', 'value' => 'grid-template-columns'],
+                            ['kind' => 'css_includes', 'value' => '@media'],
+                            ['kind' => 'css_includes', 'value' => 'gap'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Checkpoint: navegacao e hero',
+                        'duration' => '07:00',
+                        'is_free' => false,
+                        'type' => 'quiz',
+                        'content' => 'Consolida conceitos de header responsivo e composicao hero.',
+                        'quiz_pass_percentage' => 80,
+                        'quiz_randomize_questions' => true,
+                        'quiz_questions' => [
+                            [
+                                'id' => 'ui-hero-q1',
+                                'question' => 'Qual propriedade distribui itens horizontalmente no flex?',
+                                'options' => ['justify-content', 'line-height', 'z-index', 'font-weight'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-hero-q2',
+                                'question' => 'Quando usar @media?',
+                                'options' => ['para adaptar layout por largura', 'para declarar variavel', 'para validar formulario', 'para executar fetch'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-hero-q3',
+                                'question' => 'Qual propriedade cria colunas no hero com grid?',
+                                'options' => ['grid-template-columns', 'grid-auto-flow', 'grid-area-name', 'template-gap'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-hero-q4',
+                                'question' => 'Gap em layout define...',
+                                'options' => ['espaco entre blocos', 'cor de fundo', 'tipo de fonte', 'tempo de transicao'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-hero-q5',
+                                'question' => 'Em mobile, geralmente melhor...',
+                                'options' => ['reduzir para uma coluna', 'forcar duas colunas fixas', 'ocultar todos os textos', 'aumentar width fixa'],
+                                'correctOptionIndex' => 0,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'title' => '5. Grid de conteudo e tabela de precos',
+                'lessons' => [
+                    [
+                        'title' => 'Grid de features com auto-fit',
+                        'duration' => '15:40',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Monta secao de funcionalidades com cards fluidos.\n\nRequisitos:\n1. Criar .feature-grid com repeat(auto-fit, minmax(...)).\n2. Definir espacamento consistente com gap.\n3. Estilizar .feature-card com borda, padding e hover.",
+                        'examples' => [
+                            [
+                                'label' => 'Feature grid',
+                                'language' => 'css',
+                                'code' => ".feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }",
+                            ],
+                        ],
+                        'hint' => 'Auto-fit + minmax reduz necessidade de muitos breakpoints.',
+                        'html_code' => "<section class=\"feature-grid\">\n  <article class=\"feature-card\">Aulas praticas</article>\n  <article class=\"feature-card\">Projetos reais</article>\n  <article class=\"feature-card\">Certificado final</article>\n</section>",
+                        'css_code' => ".feature-card { border: 1px solid #d1d5db; border-radius: 12px; padding: 16px; }\n",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.feature-grid'],
+                            ['kind' => 'selector_exists', 'value' => '.feature-card'],
+                            ['kind' => 'css_includes', 'value' => 'display: grid'],
+                            ['kind' => 'css_includes', 'value' => 'minmax('],
+                            ['kind' => 'css_includes', 'value' => ':hover'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Tabela de precos com plano em destaque',
+                        'duration' => '16:30',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Cria uma tabela de planos com foco no plano principal.\n\nRequisitos:\n1. Estruturar cards de preco com classe .plan-card.\n2. Destacar o plano principal com .plan-popular.\n3. Adicionar hover e micro transicao visual nos planos.",
+                        'examples' => [
+                            [
+                                'label' => 'Plano popular',
+                                'language' => 'css',
+                                'code' => ".plan-popular { border-color: #2563eb; transform: translateY(-4px); }",
+                            ],
+                        ],
+                        'hint' => 'Evita exagero no destaque: borda forte + leve deslocamento ja comunica prioridade.',
+                        'html_code' => "<section class=\"pricing-table\">\n  <article class=\"plan-card\">Starter</article>\n  <article class=\"plan-card plan-popular\">Pro</article>\n  <article class=\"plan-card\">Business</article>\n</section>",
+                        'css_code' => ".pricing-table { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 14px; }\n.plan-card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; transition: transform .2s ease; }",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.pricing-table'],
+                            ['kind' => 'selector_exists', 'value' => '.plan-popular'],
+                            ['kind' => 'css_includes', 'value' => 'transform'],
+                            ['kind' => 'css_includes', 'value' => ':hover'],
+                            ['kind' => 'css_includes', 'value' => 'border'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Checkpoint: grid e precificacao',
+                        'duration' => '07:00',
+                        'is_free' => false,
+                        'type' => 'quiz',
+                        'content' => 'Consolida composicao de grid e destaque de planos.',
+                        'quiz_pass_percentage' => 80,
+                        'quiz_randomize_questions' => true,
+                        'quiz_questions' => [
+                            [
+                                'id' => 'ui-pricing-q1',
+                                'question' => 'Para cards responsivos em largura variavel, a melhor abordagem e...',
+                                'options' => ['repeat(auto-fit, minmax(...))', 'width fixa para tudo', 'position absolute', 'display table'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-pricing-q2',
+                                'question' => 'Qual estrategia destaca plano popular?',
+                                'options' => ['classe dedicada com contraste visual', 'esconder outros planos', 'usar fonte 8px', 'desativar hover'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-pricing-q3',
+                                'question' => 'Transicao suave em hover melhora...',
+                                'options' => ['percepcao de qualidade', 'tempo de build', 'cache do browser', 'seguranca'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-pricing-q4',
+                                'question' => 'Gap no grid ajuda...',
+                                'options' => ['respiracao visual entre cards', 'mudar tipografia', 'executar JS', 'validar HTML'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-pricing-q5',
+                                'question' => 'Uma tabela de precos clara precisa de...',
+                                'options' => ['hierarquia e comparacao facil', 'efeitos aleatorios', 'sem titulos', 'sem call to action'],
+                                'correctOptionIndex' => 0,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'title' => '6. Dashboard UI e acessibilidade',
+                'lessons' => [
+                    [
+                        'title' => 'Cards de metricas com CSS Grid',
+                        'duration' => '16:00',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Construi uma secao de metricas para dashboard.\n\nRequisitos:\n1. Criar .stats-grid com grid responsivo.\n2. Estilizar .stat-card com superficie e valor em destaque.\n3. Ajustar breakpoints para manter leitura em mobile.",
+                        'examples' => [
+                            [
+                                'label' => 'Metric cards',
+                                'language' => 'css',
+                                'code' => ".stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }",
+                            ],
+                        ],
+                        'hint' => 'Prioriza leitura de numero principal com peso e tamanho adequados.',
+                        'html_code' => "<section class=\"stats-grid\">\n  <article class=\"stat-card\"><p>Receita</p><strong>1990 MTn</strong></article>\n  <article class=\"stat-card\"><p>Usuarios ativos</p><strong>84</strong></article>\n  <article class=\"stat-card\"><p>Conclusoes</p><strong>71%</strong></article>\n</section>",
+                        'css_code' => ".stat-card { border: 1px solid #d1d5db; border-radius: 12px; padding: 14px; }\n",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.stats-grid'],
+                            ['kind' => 'selector_exists', 'value' => '.stat-card'],
+                            ['kind' => 'css_includes', 'value' => 'display: grid'],
+                            ['kind' => 'css_includes', 'value' => 'grid-template-columns'],
+                            ['kind' => 'css_includes', 'value' => '@media'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Tabela de dados com foco e hover',
+                        'duration' => '15:40',
+                        'is_free' => false,
+                        'type' => 'code',
+                        'language' => 'css',
+                        'content' => "Melhora a leitura de tabelas no dashboard.\n\nRequisitos:\n1. Estilizar .data-table com border-collapse e alinhamento.\n2. Adicionar estado hover para linhas da tabela.\n3. Garantir foco visivel para links/acoes dentro da tabela.",
+                        'examples' => [
+                            [
+                                'label' => 'Tabela legivel',
+                                'language' => 'css',
+                                'code' => ".data-table tr:hover { background: #f8fafc; }\n.data-table a:focus-visible { outline: 3px solid #93c5fd; }",
+                            ],
+                        ],
+                        'hint' => 'Em tabela densa, separadores discretos e hover leve ajudam muito a leitura.',
+                        'html_code' => "<table class=\"data-table\">\n  <thead><tr><th>Curso</th><th>Conclusao</th><th>Acao</th></tr></thead>\n  <tbody>\n    <tr><td>UI CSS</td><td>82%</td><td><a href=\"#\">Ver</a></td></tr>\n    <tr><td>HTML + CSS</td><td>100%</td><td><a href=\"#\">Ver</a></td></tr>\n  </tbody>\n</table>",
+                        'css_code' => ".data-table { width: 100%; border-collapse: collapse; }\n.data-table th, .data-table td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align: left; }",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.data-table'],
+                            ['kind' => 'css_includes', 'value' => 'border-collapse'],
+                            ['kind' => 'css_includes', 'value' => 'tr:hover'],
+                            ['kind' => 'css_includes', 'value' => ':focus-visible'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Checkpoint: dashboard e acessibilidade',
+                        'duration' => '07:00',
+                        'is_free' => false,
+                        'type' => 'quiz',
+                        'content' => 'Questionario sobre legibilidade de dashboard e estados acessiveis.',
+                        'quiz_pass_percentage' => 80,
+                        'quiz_randomize_questions' => true,
+                        'quiz_questions' => [
+                            [
+                                'id' => 'ui-dash-q1',
+                                'question' => 'Qual estrutura e comum para metricas em dashboard?',
+                                'options' => ['grid de cards', 'lista sem classes', 'iframe unico', 'somente tabela'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-dash-q2',
+                                'question' => 'Hover em linha de tabela ajuda...',
+                                'options' => ['rastreamento visual da linha', 'compressao de dados', 'reduzir acessibilidade', 'desativar teclado'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-dash-q3',
+                                'question' => 'Foco visivel em links e importante para...',
+                                'options' => ['navegacao por teclado', 'ocultar elementos', 'renderizar mais rapido', 'evitar HTML semantico'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-dash-q4',
+                                'question' => 'Em dashboard, sobrecarga visual deve ser evitada com...',
+                                'options' => ['espacos e hierarquia clara', 'cores aleatorias em tudo', 'zero espacamento', 'texto minusculo'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-dash-q5',
+                                'question' => 'Qual propriedade ajuda tabela ocupar largura disponivel?',
+                                'options' => ['width: 100%', 'position: fixed', 'float: left', 'font-style: table'],
+                                'correctOptionIndex' => 0,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'title' => '7. Projeto final completo',
+                'lessons' => [
+                    [
+                        'title' => 'Projeto final: UI kit + dashboard responsivo',
+                        'duration' => '35:00',
+                        'is_free' => false,
+                        'type' => 'project',
+                        'language' => 'css',
+                        'content' => "Entrega final do curso.\n\nRequisitos:\n1. Criar layout completo com header, hero, secao de features, precos e contacto.\n2. Construir area dashboard com cards de metricas e tabela de dados.\n3. Usar design tokens em :root e aplicar em componentes chave.\n4. Garantir estados :hover, :focus-visible e :disabled em elementos interativos.\n5. Tornar tudo responsivo com media query.",
+                        'examples' => [
+                            [
+                                'label' => 'Blocos esperados',
+                                'language' => 'html',
+                                'code' => "<header class=\"site-header\">...</header>\n<section class=\"hero\">...</section>\n<section class=\"feature-grid\">...</section>\n<section class=\"pricing-table\">...</section>\n<form class=\"contact-form\">...</form>\n<div class=\"dashboard\">...</div>",
+                            ],
+                        ],
+                        'hint' => 'Evolui por etapas: tokens > layout > componentes > estados > ajustes responsivos.',
+                        'html_code' => "<header class=\"site-header\">\n  <h1>UrSkool UI Pro</h1>\n  <nav class=\"menu\">\n    <a href=\"#features\">Features</a>\n    <a href=\"#pricing\">Precos</a>\n    <a href=\"#contact\">Contacto</a>\n  </nav>\n  <button class=\"btn-primary\">Comecar</button>\n</header>\n<main>\n  <section class=\"hero\">\n    <div class=\"hero-content\"><h2>UI com CSS de ponta a ponta</h2></div>\n    <div class=\"hero-media\">Preview</div>\n  </section>\n  <section id=\"features\" class=\"feature-grid\">\n    <article class=\"feature-card\">Design tokens</article>\n  </section>\n  <section id=\"pricing\" class=\"pricing-table\">\n    <article class=\"plan-card plan-popular\">Plano Pro</article>\n  </section>\n  <form id=\"contact\" class=\"contact-form\">\n    <label for=\"email\">Email</label>\n    <input id=\"email\" />\n    <button class=\"btn-primary\" disabled>Enviar</button>\n  </form>\n  <div class=\"dashboard\">\n    <section class=\"stats-grid\"><article class=\"stat-card\">Receita</article></section>\n    <table class=\"data-table\"><tr><th>Curso</th></tr><tr><td>UI CSS</td></tr></table>\n  </div>\n</main>",
+                        'css_code' => ".site-header { padding: 18px; border-bottom: 1px solid #e5e7eb; }\n.menu { display: flex; gap: 10px; }\n.hero { margin: 20px 0; }\n.feature-card, .plan-card, .stat-card { border: 1px solid #d1d5db; border-radius: 12px; padding: 14px; }\n.data-table { width: 100%; border-collapse: collapse; }\n",
+                        'js_code' => '',
+                        'validation_rules' => [
+                            ['kind' => 'selector_exists', 'value' => '.site-header'],
+                            ['kind' => 'selector_exists', 'value' => '.hero'],
+                            ['kind' => 'selector_exists', 'value' => '.feature-grid'],
+                            ['kind' => 'selector_exists', 'value' => '.pricing-table'],
+                            ['kind' => 'selector_exists', 'value' => '.dashboard'],
+                            ['kind' => 'selector_exists', 'value' => '.stats-grid'],
+                            ['kind' => 'selector_exists', 'value' => '.data-table'],
+                            ['kind' => 'css_includes', 'value' => ':root'],
+                            ['kind' => 'css_includes', 'value' => 'grid-template-columns'],
+                            ['kind' => 'css_includes', 'value' => '@media'],
+                            ['kind' => 'css_includes', 'value' => ':focus-visible'],
+                        ],
+                    ],
+                    [
+                        'title' => 'Checkpoint final: UI CSS master',
+                        'duration' => '07:30',
+                        'is_free' => false,
+                        'type' => 'quiz',
+                        'content' => 'Avaliacao final da trilha completa de UI com CSS.',
+                        'quiz_pass_percentage' => 80,
+                        'quiz_randomize_questions' => true,
+                        'quiz_questions' => [
+                            [
+                                'id' => 'ui-master-q1',
+                                'question' => 'Um bom projeto UI CSS deve priorizar...',
+                                'options' => ['consistencia, acessibilidade e responsividade', 'apenas efeitos visuais', 'somente desktop', 'evitar componentes reutilizaveis'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-master-q2',
+                                'question' => 'Qual elemento do projeto final valida leitura de dados?',
+                                'options' => ['tabela de dashboard', 'favicon', 'meta charset', 'script vazio'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-master-q3',
+                                'question' => 'Qual regra ajuda garantir navegacao por teclado?',
+                                'options' => [':focus-visible', ':hover', ':active somente', ':visited'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-master-q4',
+                                'question' => 'Para escalar interface sem retrabalho, use...',
+                                'options' => ['design tokens e componentes', 'inline style em cada bloco', 'cores aleatorias por secao', 'sem classes'],
+                                'correctOptionIndex' => 0,
+                            ],
+                            [
+                                'id' => 'ui-master-q5',
+                                'question' => 'Media query no projeto final garante...',
+                                'options' => ['adaptacao em diferentes larguras', 'execucao de API', 'persistencia local', 'criptografia de senha'],
+                                'correctOptionIndex' => 0,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+    }
+
     private function formatLessonContent(array $lessonData, string $lessonType): ?string
     {
         $raw = isset($lessonData['content']) ? trim((string) $lessonData['content']) : '';
@@ -1553,7 +2381,7 @@ TEXT,
             return null;
         }
 
-        if ($lessonType !== 'code') {
+        if (! in_array($lessonType, ['code', 'project'], true)) {
             return $raw;
         }
 
@@ -1700,5 +2528,46 @@ HTML;
         }
 
         return $steps;
+    }
+
+    private function buildWorkspaceFiles(string $htmlCode, string $cssCode, string $jsCode): array
+    {
+        return [
+            [
+                'id' => 'index-html',
+                'name' => 'index.html',
+                'language' => 'html',
+                'content' => $htmlCode,
+            ],
+            [
+                'id' => 'style-css',
+                'name' => 'style.css',
+                'language' => 'css',
+                'content' => $cssCode,
+            ],
+            [
+                'id' => 'script-js',
+                'name' => 'script.js',
+                'language' => 'js',
+                'content' => $jsCode,
+            ],
+        ];
+    }
+
+    private function resolveValidationRules(array $lessonData, string $htmlCode, string $cssCode, string $jsCode): array
+    {
+        $providedRules = LessonCodeValidator::normalizeRules(
+            is_array($lessonData['validation_rules'] ?? null) ? $lessonData['validation_rules'] : []
+        );
+
+        if ($providedRules !== []) {
+            return $providedRules;
+        }
+
+        return LessonCodeValidator::deriveValidationRules([
+            'html' => $htmlCode,
+            'css' => $cssCode,
+            'js' => $jsCode,
+        ]);
     }
 }
