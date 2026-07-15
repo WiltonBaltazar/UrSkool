@@ -12,12 +12,28 @@ export interface LessonWorkspaceFile {
   content: string;
 }
 
+export interface CodeValidationRule {
+  kind: "html_includes" | "css_includes" | "js_includes" | "selector_exists" | "text_includes";
+  value: string;
+}
+
+export type LessonTextMediaType = "none" | "image" | "youtube";
+
+export interface SubmittedLessonCode {
+  html: string;
+  css: string;
+  js: string;
+}
+
 export interface Lesson {
   id: string;
   title: string;
   duration: string;
   videoUrl?: string | null;
   type?: "video" | "text" | "code" | "quiz" | "project";
+  textMediaType?: LessonTextMediaType | null;
+  textMediaImageUrl?: string | null;
+  textMediaYoutubeUrl?: string | null;
   language?: string | null;
   content?: string | null;
   starterCode?: string | null;
@@ -26,10 +42,10 @@ export interface Lesson {
   jsCode?: string | null;
   workspaceFiles?: LessonWorkspaceFile[] | null;
   entryHtmlFileId?: string | null;
+  validationRules?: CodeValidationRule[] | null;
   quizQuestions?: QuizQuestion[] | null;
   quizPassPercentage?: number | null;
   quizRandomizeQuestions?: boolean | null;
-  isFree: boolean;
 }
 
 export interface Section {
@@ -103,8 +119,8 @@ export interface CourseProgress {
 export interface SaveLessonProgressPayload {
   status: "in_progress" | "completed";
   codeIsCorrect?: boolean;
-  quizScore?: number | null;
-  quizPassed?: boolean;
+  quizAnswers?: Record<string, number>;
+  submittedCode?: SubmittedLessonCode;
 }
 
 export interface CoursePayload {
@@ -127,6 +143,11 @@ export interface CoursePayload {
       title: string;
       duration: string;
       videoUrl?: string;
+      textMediaType?: LessonTextMediaType;
+      textMediaImageUrl?: string;
+      textMediaImageFile?: File;
+      removeTextMediaImage?: boolean;
+      textMediaYoutubeUrl?: string;
       language?: string;
       content?: string;
       starterCode?: string;
@@ -135,10 +156,10 @@ export interface CoursePayload {
       jsCode?: string;
       workspaceFiles?: LessonWorkspaceFile[];
       entryHtmlFileId?: string;
+      validationRules?: CodeValidationRule[];
       quizQuestions?: QuizQuestion[];
       quizPassPercentage?: number;
       quizRandomizeQuestions?: boolean;
-      isFree: boolean;
       type: "video" | "text" | "code" | "quiz" | "project";
     }>;
   }>;
@@ -191,6 +212,20 @@ export interface AdminEnrollmentSummary {
   createdAt?: string;
 }
 
+export interface CourseCertificate {
+  id: string;
+  shareCode: string;
+  shareUrl: string;
+  recipientName: string;
+  courseId: string;
+  courseTitle: string;
+  schoolName: string;
+  issuerTitle: string;
+  issuerName: string;
+  signatureImageUrl?: string | null;
+  issuedAt: string;
+}
+
 export interface AdminSettings {
   platformName: string;
   supportEmail: string;
@@ -198,11 +233,31 @@ export interface AdminSettings {
   maintenanceMode: boolean;
   allowSelfSignup: boolean;
   defaultCourseVisibility: "public" | "private";
+  certificateSchoolName: string;
+  certificateIssuerTitle: string;
+  certificateIssuerName: string;
+  certificateSignatureUrl: string;
 }
 
 export interface AdminCategoryBreakdown {
   name: string;
   count: number;
+}
+
+export interface AdminDailyActivity {
+  date: string;
+  activeLearners: number;
+  lessonsCompleted: number;
+}
+
+export interface AdminEngagementMetrics {
+  weeklyActiveLearners: number;
+  weeklyLessonsCompleted: number;
+  avgLessonsPerActiveLearner: number;
+  activationRate: number;
+  checkoutConversionRate: number;
+  revenuePerLearner: number;
+  activitySeries: AdminDailyActivity[];
 }
 
 export interface AdminDashboardData {
@@ -213,7 +268,20 @@ export interface AdminDashboardData {
   categories: AdminCategoryBreakdown[];
   coursePerformance: AdminCoursePerformance[];
   studentPerformance: AdminStudentPerformance[];
+  engagement: AdminEngagementMetrics;
   settings: AdminSettings;
+}
+
+export interface PaginationMeta {
+  currentPage: number;
+  lastPage: number;
+  perPage: number;
+  total: number;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  meta: PaginationMeta;
 }
 
 export interface AdminCoursePerformance {

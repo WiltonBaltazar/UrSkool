@@ -5,11 +5,13 @@ import type {
   AdminUserSummary,
   AuthUser,
   CheckoutResult,
+  CourseCertificate,
   Course,
   CourseAccess,
   CourseProgress,
   CoursePayload,
   EnrollmentPayload,
+  PaginatedResponse,
   SaveLessonProgressPayload,
 } from "@/lib/types";
 
@@ -24,7 +26,6 @@ interface SessionState {
 }
 
 const baseJsonHeaders: Record<string, string> = {
-  "Content-Type": "application/json",
   Accept: "application/json",
 };
 const SESSION_STORAGE_KEY = "urskool.auth.session.v1";
@@ -138,8 +139,11 @@ const getMetaCsrfToken = (): string | null => {
     ?.getAttribute("content") ?? null;
 };
 
-const buildJsonHeaders = (): Record<string, string> => {
+const buildJsonHeaders = (includeJsonContentType = true): Record<string, string> => {
   const headers: Record<string, string> = { ...baseJsonHeaders };
+  if (includeJsonContentType) {
+    headers["Content-Type"] = "application/json";
+  }
   const cookieToken = getCsrfToken();
 
   if (cookieToken) {
@@ -176,6 +180,11 @@ const normalizeHeaders = (headers?: HeadersInit): Record<string, string> => {
   }
 
   return { ...headers };
+};
+
+const hasExplicitContentTypeHeader = (headers?: HeadersInit): boolean => {
+  const normalized = normalizeHeaders(headers);
+  return Object.keys(normalized).some((key) => key.toLowerCase() === "content-type");
 };
 
 const shouldSkipSessionRefresh = (target: string): boolean => {
@@ -260,13 +269,21 @@ async function refreshSession(): Promise<boolean> {
       try {
         await ensureCsrfCookie();
 
-        const response = await fetch(
-          apiPath(refreshSessionEndpoint),
-          withCredentials({
-            method: "POST",
-            headers: buildJsonHeaders(),
-          }),
-        );
+        const execute = () =>
+          fetch(
+            apiPath(refreshSessionEndpoint),
+            withCredentials({
+              method: "POST",
+              headers: buildJsonHeaders(),
+            }),
+          );
+
+        let response = await execute();
+
+        if (response.status === 419) {
+          await ensureCsrfCookie(true);
+          response = await execute();
+        }
 
         const payload = await response.json().catch(() => ({}));
         if (response.ok) {
@@ -316,10 +333,15 @@ async function fetchWithCsrfRetry(input: RequestInfo | URL, init: RequestInit = 
       target,
       withCredentials({
         ...init,
-        headers: {
-          ...buildJsonHeaders(),
-          ...normalizeHeaders(init.headers),
-        },
+        headers: (() => {
+          const isFormDataBody = typeof FormData !== "undefined" && init.body instanceof FormData;
+          const includeJsonContentType = !isFormDataBody && !hasExplicitContentTypeHeader(init.headers);
+
+          return {
+            ...buildJsonHeaders(includeJsonContentType),
+            ...normalizeHeaders(init.headers),
+          };
+        })(),
       }),
     );
 
@@ -410,7 +432,8 @@ export async function fetchCategories(): Promise<string[]> {
 export async function fetchCourses(filters?: {
   search?: string;
   category?: string;
-}): Promise<Course[]> {
+  page?: number;
+}): Promise<PaginatedResponse<Course>> {
   const params = new URLSearchParams();
 
   if (filters?.search) {
@@ -421,11 +444,14 @@ export async function fetchCourses(filters?: {
     params.set("category", filters.category);
   }
 
+  if (filters?.page && filters.page > 1) {
+    params.set("page", String(filters.page));
+  }
+
   const query = params.toString();
   const response = await fetchWithCsrfRetry(`/api/courses${query ? `?${query}` : ""}`);
 
-  const payload = await parseResponse<ApiResponse<Course[]>>(response);
-  return payload.data;
+  return parseResponse<PaginatedResponse<Course>>(response);
 }
 
 export async function fetchCourse(courseId: string): Promise<Course> {
@@ -480,10 +506,94 @@ export async function saveLessonProgress(
   return parsed.data;
 }
 
-export async function createCourse(payload: CoursePayload): Promise<Course> {
-  const response = await fetchWithCsrfRetry("/api/admin/courses", {
+export async function fetchCourseCertificate(courseId: string): Promise<CourseCertificate> {
+  const response = await fetchWithCsrfRetry(`/api/student/courses/${courseId}/certificate`);
+
+  const payload = await parseResponse<ApiResponse<CourseCertificate>>(response);
+  return payload.data;
+}
+
+export async function fetchPublicCertificate(shareCode: string): Promise<CourseCertificate> {
+  const response = await fetchWithCsrfRetry(`/api/certificates/${shareCode}`);
+
+  const payload = await parseResponse<ApiResponse<CourseCertificate>>(response);
+  return payload.data;
+}
+
+const payloadHasFile = (candidate: unknown): boolean => {
+  if (!candidate) return false;
+  if (typeof File !== "undefined" && candidate instanceof File) return true;
+  if (Array.isArray(candidate)) return candidate.some((item) => payloadHasFile(item));
+  if (typeof candidate === "object") {
+    return Object.values(candidate as Record<string, unknown>).some((item) => payloadHasFile(item));
+  }
+
+  return false;
+};
+
+const appendFormDataValue = (formData: FormData, key: string, value: unknown): void => {
+  if (value === undefined || value === null) {
+    return;
+  }
+
+  if (typeof File !== "undefined" && value instanceof File) {
+    formData.append(key, value);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      appendFormDataValue(formData, `${key}[${index}]`, item);
+    });
+    return;
+  }
+
+  if (typeof value === "object") {
+    Object.entries(value as Record<string, unknown>).forEach(([childKey, childValue]) => {
+      appendFormDataValue(formData, `${key}[${childKey}]`, childValue);
+    });
+    return;
+  }
+
+  if (typeof value === "boolean") {
+    formData.append(key, value ? "1" : "0");
+    return;
+  }
+
+  formData.append(key, String(value));
+};
+
+const buildCourseRequestBody = (
+  payload: CoursePayload,
+  forUpdate: boolean,
+): { method: "POST" | "PUT"; body: FormData | string } => {
+  if (!payloadHasFile(payload)) {
+    return {
+      method: forUpdate ? "PUT" : "POST",
+      body: JSON.stringify(payload),
+    };
+  }
+
+  const formData = new FormData();
+  if (forUpdate) {
+    formData.append("_method", "PUT");
+  }
+
+  Object.entries(payload).forEach(([key, value]) => {
+    appendFormDataValue(formData, key, value);
+  });
+
+  return {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: formData,
+  };
+};
+
+export async function createCourse(payload: CoursePayload): Promise<Course> {
+  const request = buildCourseRequestBody(payload, false);
+  const response = await fetchWithCsrfRetry("/api/admin/courses", {
+    method: request.method,
+    body: request.body,
   });
 
   const parsed = await parseResponse<ApiResponse<Course>>(response);
@@ -491,9 +601,10 @@ export async function createCourse(payload: CoursePayload): Promise<Course> {
 }
 
 export async function updateAdminCourse(courseId: string, payload: CoursePayload): Promise<Course> {
+  const request = buildCourseRequestBody(payload, true);
   const response = await fetchWithCsrfRetry(`/api/admin/courses/${courseId}`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
+    method: request.method,
+    body: request.body,
   });
 
   const parsed = await parseResponse<ApiResponse<Course>>(response);
@@ -604,10 +715,42 @@ export async function fetchAdminSettings(): Promise<AdminSettings> {
   return payload.data;
 }
 
-export async function updateAdminSettings(payload: AdminSettings): Promise<AdminSettings> {
+export async function updateAdminSettings(
+  payload: AdminSettings,
+  options?: {
+    certificateSignatureFile?: File | null;
+    removeCertificateSignature?: boolean;
+  },
+): Promise<AdminSettings> {
+  const hasFile = Boolean(options?.certificateSignatureFile);
+  const removeSignature = Boolean(options?.removeCertificateSignature);
+  const method = hasFile ? "POST" : "PUT";
+  const body = hasFile
+    ? (() => {
+      const formData = new FormData();
+      formData.append("_method", "PUT");
+      formData.append("platformName", payload.platformName);
+      formData.append("supportEmail", payload.supportEmail);
+      formData.append("currency", payload.currency);
+      formData.append("maintenanceMode", payload.maintenanceMode ? "1" : "0");
+      formData.append("allowSelfSignup", payload.allowSelfSignup ? "1" : "0");
+      formData.append("defaultCourseVisibility", payload.defaultCourseVisibility);
+      formData.append("certificateSchoolName", payload.certificateSchoolName);
+      formData.append("certificateIssuerTitle", payload.certificateIssuerTitle);
+      formData.append("certificateIssuerName", payload.certificateIssuerName);
+      formData.append("removeCertificateSignature", removeSignature ? "1" : "0");
+      formData.append("certificateSignatureFile", options?.certificateSignatureFile as File);
+
+      return formData;
+    })()
+    : JSON.stringify({
+      ...payload,
+      removeCertificateSignature: removeSignature,
+    });
+
   const response = await fetchWithCsrfRetry("/api/admin/settings", {
-    method: "PUT",
-    body: JSON.stringify(payload),
+    method,
+    body,
   });
 
   const parsed = await parseResponse<ApiResponse<AdminSettings>>(response);
